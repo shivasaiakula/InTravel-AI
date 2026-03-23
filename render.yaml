@@ -1,6 +1,6 @@
 services:
   # 🌍 Frontend: Static Site (React/Vite)
-  - type: static
+  - type: static_site
     name: intravel-frontend
     runtime: static
     rootDir: client
