@@ -1,0 +1,61 @@
+services:
+  # 🌍 Frontend: Static Site (React/Vite)
+  - type: static
+    name: intravel-frontend
+    runtime: static
+    rootDir: client
+    buildCommand: npm install && npm run build
+    publishDir: dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          name: intravel-backend
+          type: web
+          property: url
+
+  # ⚙️ Backend: Node.js API
+  - type: web
+    name: intravel-backend
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node index.js
+    plan: free # Change to starter or higher for persistent disk
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: production
+      - key: DB_HOST
+        fromService:
+          name: intravel-db
+          type: database
+          property: host
+      - key: DB_USER
+        fromService:
+          name: intravel-db
+          type: database
+          property: user
+      - key: DB_PASSWORD
+        fromService:
+          name: intravel-db
+          type: database
+          property: password
+      - key: DB_NAME
+        fromService:
+          name: intravel-db
+          type: database
+          property: name
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false # Set this in Render Dashboard later
+
+  # 💾 Database: Managed MySQL (PostgreSQL on Render Free Tier)
+  # Note: Render Free Tier uses PostgreSQL. If MySQL is required, use a provider like Aiven.io.
+  # For this blueprint, we'll use Render's native PostgreSQL as an example.
+  - type: database
+    name: intravel-db
+    databaseName: indian_travel_platform
+    user: admin
+    plan: free

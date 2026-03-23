@@ -25,4 +25,3 @@ rtppp
 run-app.bat
 docker-compose.yml
 Dockerfile
-render.yaml
