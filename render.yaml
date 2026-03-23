@@ -20,7 +20,7 @@ services:
     rootDir: server
     buildCommand: npm install
     startCommand: node index.js
-    plan: free # Change to starter or higher for persistent disk
+    plan: free
     envVars:
       - key: PORT
         value: 5000
@@ -49,11 +49,11 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: GEMINI_API_KEY
-        sync: false # Set this in Render Dashboard later
+        sync: false
 
+databases:
   # 💾 Database: Managed PostgreSQL (Render Free Tier)
-  - type: database
-    name: intravel-db
+  - name: intravel-db
     databaseName: indian_travel_platform
     user: admin
     plan: free
