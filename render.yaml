@@ -1,6 +1,6 @@
 services:
   # 🌍 Frontend: Static Site (React/Vite)
-  - type: static_site
+  - type: web
     name: intravel-frontend
     runtime: static
     rootDir: client
@@ -51,9 +51,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false # Set this in Render Dashboard later
 
-  # 💾 Database: Managed MySQL (PostgreSQL on Render Free Tier)
-  # Note: Render Free Tier uses PostgreSQL. If MySQL is required, use a provider like Aiven.io.
-  # For this blueprint, we'll use Render's native PostgreSQL as an example.
+  # 💾 Database: Managed PostgreSQL (Render Free Tier)
   - type: database
     name: intravel-db
     databaseName: indian_travel_platform
