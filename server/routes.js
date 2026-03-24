@@ -246,7 +246,7 @@ router.get('/nearby', async (req, res) => {
 function generateFallbackItinerary(destination, days, budget, purpose) {
     const dayBudget = Math.floor(budget / days);
     let itinerary = '';
-    for (let d = 1; d <= Math.min(days, 5); d++) {
+    for (let d = 1; d <= days; d++) {
         itinerary += `Day ${d} — Exploring ${destination}\n`;
         itinerary += `🌅 Morning: Visit the iconic landmarks of ${destination}. Start early (7 AM) to beat crowds.\n`;
         itinerary += `🌞 Afternoon: Explore local markets, taste regional street food and visit nearby attractions.\n`;
@@ -254,7 +254,7 @@ function generateFallbackItinerary(destination, days, budget, purpose) {
         itinerary += `💰 Estimated Day Cost: ₹${dayBudget.toLocaleString('en-IN')}\n`;
         itinerary += `💡 Pro Tip: Talk to locals for hidden gems that no travel guide mentions!\n\n`;
     }
-    return itinerary;
+    return itinerary.trim();
 }
 
 // ── MOCK DATA ──

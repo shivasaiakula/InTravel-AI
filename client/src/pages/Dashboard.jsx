@@ -50,9 +50,17 @@ export default function Dashboard() {
     setLoading(false);
   };
 
+  const getDayDiff = (start, end) => {
+    if (!start || !end) return 3; // Fallback
+    const s = new Date(start);
+    const e = new Date(end);
+    const diff = Math.ceil(Math.abs(e - s) / (1000 * 60 * 60 * 24));
+    return diff || 1;
+  };
+  
   const totalBudget = trips.reduce((acc, t) => acc + parseFloat(t.budget_estimate || 0), 0);
   const avgBudget = trips.length > 0 ? totalBudget / trips.length : 0;
-  const totalDays = trips.reduce((acc, t) => acc + parseFloat(t.days || 3), 0);
+  const totalDays = trips.reduce((acc, t) => acc + (t.days || getDayDiff(t.start_date, t.end_date)), 0);
 
   const barData = {
     labels: trips.map(t => t.destination_name),
@@ -228,7 +236,7 @@ export default function Dashboard() {
                   </div>
                   <div className="trip-card-body">
                     <div className="trip-stat"><Wallet size={14} /> <span>Budget: <strong>₹{parseFloat(trip.budget_estimate).toLocaleString('en-IN')}</strong></span></div>
-                    <div className="trip-stat"><Clock size={14} /> <span>{trip.days || '3'} Days</span></div>
+                    <div className="trip-stat"><Clock size={14} /> <span>{trip.days || getDayDiff(trip.start_date, trip.end_date)} Days</span></div>
                   </div>
                   <div className="trip-actions">
                     <a href="/planner" className="button-primary btn-sm">📋 View Plan</a>

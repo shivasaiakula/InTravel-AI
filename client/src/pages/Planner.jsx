@@ -121,23 +121,17 @@ export default function Planner() {
   };
 
   const generateMockItinerary = (form) => {
-    return `Day 1 – Arrival & Orientation in ${form.destination}
-Morning: Arrive and check in to your hotel. Freshen up and rest.
-Afternoon: Take a leisurely walk around the city center, getting your bearings.
-Evening: Enjoy a welcome dinner at a local restaurant featuring regional cuisine.
-Estimated Cost: ₹${Math.floor(form.budget / form.days * 0.8)}
-
-Day 2 – Core Attractions
-Morning: Visit the main historical monument or attraction. 
-Afternoon: Local market exploration, street food tasting.
-Evening: Sunset viewpoint or cultural show.
-Estimated Cost: ₹${Math.floor(form.budget / form.days)}
-
-Day 3 – Hidden Gems & Departure
-Morning: Lesser-known neighborhood walk and photographs.
-Afternoon: Souvenir shopping and last local meal.
-Evening: Head to airport/station. 
-Estimated Cost: ₹${Math.floor(form.budget / form.days * 0.6)}`;
+    let itinerary = '';
+    const dayBudget = Math.floor(form.budget / form.days);
+    
+    for (let i = 1; i <= form.days; i++) {
+      itinerary += `Day ${i} – ${i === 1 ? 'Arrival & Orientation' : i === form.days ? 'Hidden Gems & Departure' : 'Exploring Local Culture'} in ${form.destination}\n`;
+      itinerary += `Morning: ${i === 1 ? 'Arrive and check in to your hotel.' : 'Visit a famous local landmark or temple.'}\n`;
+      itinerary += `Afternoon: ${i === form.days ? 'Last minute shopping for souvenirs.' : 'Enjoy authentic local cuisine at a highly-rated dhaba.'}\n`;
+      itinerary += `Evening: ${i === form.days ? 'Head to airport/station for departure.' : 'Relaxing walk at a sunset viewpoint or evening market.'}\n`;
+      itinerary += `Estimated Cost: ₹${dayBudget}\n\n`;
+    }
+    return itinerary.trim();
   };
 
   const toggleStyle = (style) => {
@@ -155,12 +149,16 @@ Estimated Cost: ₹${Math.floor(form.budget / form.days * 0.6)}`;
 
   const handleSave = async () => {
     if (!user) { alert("Please login to save your trips!"); return; }
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(startDate.getDate() + formData.days);
+    
     try {
       await axios.post('/api/trips', {
         userId: user.id,
         destination: formData.destination,
-        start_date: new Date().toISOString().split('T')[0],
-        end_date: new Date().toISOString().split('T')[0],
+        start_date: startDate.toISOString().split('T')[0],
+        end_date: endDate.toISOString().split('T')[0],
         budget: formData.budget,
         itinerary: { content: itinerary },
       });
