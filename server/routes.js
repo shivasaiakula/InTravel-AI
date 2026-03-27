@@ -250,6 +250,48 @@ router.get('/nearby', async (req, res) => {
     });
 });
 
+// ── COMMUNITY REVIEWS ──
+router.get('/reviews/:city', async (req, res) => {
+    try {
+        const [rows] = await db.execute(`
+            SELECT r.*, u.username as user_name 
+            FROM reviews r 
+            LEFT JOIN users u ON r.user_id = u.id 
+            WHERE r.destination_name = ? 
+            ORDER BY r.created_at DESC
+        `, [req.params.city]);
+        res.json(rows.length > 0 ? rows : mockReviews.filter(r => r.city === req.params.city));
+    } catch (err) {
+        res.json(mockReviews.filter(r => r.city === req.params.city));
+    }
+});
+
+router.post('/reviews', async (req, res) => {
+    const { userId, city, rating, comment } = req.body;
+    try {
+        await db.execute(
+            'INSERT INTO reviews (user_id, destination_name, rating, comment) VALUES (?, ?, ?, ?)',
+            [userId || null, city, rating, comment]
+        );
+        res.status(201).json({ message: 'Review added' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── PAYMENTS (MOCK CHECKOUT) ──
+router.post('/checkout', async (req, res) => {
+    const { amount, purpose } = req.body;
+    // Simulate payment processor delay
+    setTimeout(() => {
+        res.json({
+            success: true,
+            transactionId: 'txn_' + Math.random().toString(36).substr(2, 9),
+            message: `Processed ₹${amount} for ${purpose}`
+        });
+    }, 1500);
+});
+
 // ── HELPERS ──
 function generateFallbackItinerary(destination, days, budget, purpose) {
     const dayBudget = Math.floor(budget / days);
@@ -412,6 +454,13 @@ const mockHotels = [
     { city: 'Agra', name: 'ITC Mughal Hotel', price_per_night: 9000, rating: 4.6, amenities: 'Mughal Gardens, Pool, Dum Pukht Restaurant', image_url: 'https://images.unsplash.com/photo-1608037521244-f1c6c7635194?w=300&auto=format&fit=crop' },
     // Andaman hotels
     { city: 'Andaman Islands', name: 'Taj Exotica Resort Andamans', price_per_night: 22000, rating: 4.8, amenities: 'Private Beach, Overwater Bar, Coral Reef Snorkelling', image_url: 'https://images.unsplash.com/photo-1559494007-9f5847c49d94?w=300&auto=format&fit=crop' },
+];
+
+const mockReviews = [
+    { city: 'Goa', user_name: 'TravelBug', rating: 5, comment: 'Absolutely amazing! Renting a scooter is a must.', created_at: new Date().toISOString() },
+    { city: 'Goa', user_name: 'Wanderer', rating: 4, comment: 'Great food but crowded in December.', created_at: new Date().toISOString() },
+    { city: 'Manali', user_name: 'SnowLover', rating: 5, comment: 'Magical snowfall! Solang valley was gorgeous.', created_at: new Date().toISOString() },
+    { city: 'Jaipur', user_name: 'HeritageFan', rating: 5, comment: 'The forts are breathtaking. Go early to beat the heat!', created_at: new Date().toISOString() }
 ];
 
 module.exports = router;

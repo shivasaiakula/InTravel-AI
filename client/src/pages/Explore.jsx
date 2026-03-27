@@ -13,6 +13,7 @@ export default function Explore() {
   const [activeCategory, setActiveCategory] = useState('All');
   const [weather, setWeather] = useState(null);
   const [hotels, setHotels] = useState([]);
+  const [reviews, setReviews] = useState([]);
   const [crowd, setCrowd] = useState(null);
   const [loading, setLoading] = useState(true);
   const [skeletons] = useState([1, 2, 3, 4, 5, 6]);
@@ -24,6 +25,7 @@ export default function Explore() {
       fetchWeather(selected.name);
       fetchHotels(selected.name);
       fetchCrowd(selected.name);
+      fetchReviews(selected.name);
     }
   }, [selected]);
 
@@ -64,6 +66,13 @@ export default function Explore() {
     try {
       const { data } = await axios.get(`/api/hotels?city=${city}`);
       setHotels(data);
+    } catch (err) { console.error(err); }
+  };
+
+  const fetchReviews = async (city) => {
+    try {
+      const { data } = await axios.get(`/api/reviews/${city}`);
+      setReviews(data);
     } catch (err) { console.error(err); }
   };
 
@@ -286,6 +295,22 @@ export default function Explore() {
                     ) : (
                       <p style={{ color: 'var(--text-muted)' }}>Loading hotels for {selected.name}...</p>
                     )}
+                  </div>
+                </div>
+
+                {/* Community Reviews */}
+                <div className="info-section review-section" style={{ marginTop: '2rem' }}>
+                  <h4>💬 Traveler Reviews</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+                    {reviews.length > 0 ? reviews.map((r, i) => (
+                      <div key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '0.8rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                          <span style={{ fontWeight: 600 }}>{r.user_name}</span>
+                          <span style={{ color: 'var(--accent-amber)', fontSize: '0.85rem' }}>{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
+                        </div>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{r.comment}</p>
+                      </div>
+                    )) : <p style={{ color: 'var(--text-muted)' }}>No reviews yet. Be the first to visit!</p>}
                   </div>
                 </div>
 

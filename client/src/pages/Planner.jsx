@@ -72,10 +72,17 @@ export default function Planner() {
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
   const [score, setScore] = useState(null);
+  const [isPremium, setIsPremium] = useState(false);
+  const [showCheckout, setShowCheckout] = useState(false);
+  const [processingPayment, setProcessingPayment] = useState(false);
   const user = JSON.parse(localStorage.getItem('user'));
 
   const handleGenerate = async (e) => {
     e?.preventDefault();
+    if (isPremium && !showCheckout) {
+       setShowCheckout(true);
+       return;
+    }
     setLoading(true);
     setSaved(false);
     try {
@@ -110,6 +117,20 @@ export default function Planner() {
     setLoading(false);
   };
 
+  const handlePayment = async () => {
+    setProcessingPayment(true);
+    try {
+      await axios.post('/api/checkout', { amount: 499, purpose: `Premium Itinerary: ${formData.destination}` });
+      setShowCheckout(false);
+      handleGenerate(); // Call generation directly after payment mock success
+    } catch {
+      setShowCheckout(false);
+      handleGenerate();
+    } finally {
+      setProcessingPayment(false);
+    }
+  };
+
   const parseItinerary = (text) => {
     const dayRegex = /Day\s*\d+/gi;
     const parts = text.split(dayRegex);
@@ -124,11 +145,18 @@ export default function Planner() {
     let itinerary = '';
     const dayBudget = Math.floor(form.budget / form.days);
     
+    const activityPatterns = [
+      { morning: 'Visit the main historical monument or attraction.', afternoon: 'Explore local markets and sample street food snacks.', evening: 'Enjoy a sunset viewpoint walk or cultural performance.' },
+      { morning: 'Explore hidden art galleries and boutique museums.', afternoon: 'Deeper dive into regional cuisine for lunch.', evening: 'Night market exploration or a rooftop dinner with views.' },
+      { morning: 'Quiet walk through the city gardens or lakeside.', afternoon: 'Visit a traditional handicraft workshop or emporium.', evening: 'Stargazing at a scenic spot or local home-cooked meal.' }
+    ];
+
     for (let i = 1; i <= form.days; i++) {
-      itinerary += `Day ${i} – ${i === 1 ? 'Arrival & Orientation' : i === form.days ? 'Hidden Gems & Departure' : 'Exploring Local Culture'} in ${form.destination}\n`;
-      itinerary += `Morning: ${i === 1 ? 'Arrive and check in to your hotel.' : 'Visit a famous local landmark or temple.'}\n`;
-      itinerary += `Afternoon: ${i === form.days ? 'Last minute shopping for souvenirs.' : 'Enjoy authentic local cuisine at a highly-rated dhaba.'}\n`;
-      itinerary += `Evening: ${i === form.days ? 'Head to airport/station for departure.' : 'Relaxing walk at a sunset viewpoint or evening market.'}\n`;
+      const pattern = activityPatterns[(i-1) % activityPatterns.length];
+      itinerary += `Day ${i} – ${i === 1 ? 'Arrival & Orientation' : i === form.days ? 'Hidden Gems & Departure' : 'Deeper Exploration'} in ${form.destination}\n`;
+      itinerary += `Morning: ${i === 1 ? 'Arrive at destination and check in to your hotel.' : pattern.morning}\n`;
+      itinerary += `Afternoon: ${i === form.days ? 'Last minute souvenir shopping and last local meal.' : pattern.afternoon}\n`;
+      itinerary += `Evening: ${i === form.days ? 'Head to airport/station for departure.' : pattern.evening}\n`;
       itinerary += `Estimated Cost: ₹${dayBudget}\n\n`;
     }
     return itinerary.trim();
@@ -312,6 +340,14 @@ export default function Planner() {
                   </div>
                 </div>
 
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', padding: '1rem', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 'var(--radius-sm)' }}>
+                  <input type="checkbox" id="premiumToggle" checked={isPremium} onChange={e => setIsPremium(e.target.checked)} style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }} />
+                  <label htmlFor="premiumToggle" style={{ cursor: 'pointer', flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>Enable Premium AI Generation (₹499)</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>Unlock verified secret spots, priority routing, and hyper-detailed day plans.</div>
+                  </label>
+                </div>
+
                 <div className="form-actions">
                   <button className="button-secondary" onClick={() => setStep(1)}>← Back</button>
                   <button
@@ -467,6 +503,20 @@ export default function Planner() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Checkout Modal */}
+      {showCheckout && (
+        <div className="modal-overlay" onClick={() => setShowCheckout(false)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.8)' }}>
+          <div className="glass-card" onClick={e => e.stopPropagation()} style={{ width: '90%', maxWidth: '400px', textAlign: 'center', background: 'var(--bg-2)' }}>
+            <h3 style={{ marginBottom: '0.5rem' }}>Premium AI Access</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>Generate a hyper-detailed, verified itinerary for {formData.destination}.</p>
+            <div style={{ fontSize: '2.5rem', fontWeight: 800, marginBottom: '2rem', color: 'var(--text)' }}>₹499</div>
+            <button className="button-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={handlePayment} disabled={processingPayment}>
+              {processingPayment ? <><RefreshCw size={16} className="spin-icon"/> Processing...</> : 'Pay with API (Mock)'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
