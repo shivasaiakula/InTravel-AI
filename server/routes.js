@@ -18,6 +18,13 @@ function setCache(key, data) { cache.set(key, { data, ts: Date.now() }); }
 router.post('/register', async (req, res) => {
     try {
         const { username, email, password } = req.body;
+        
+        // Check if user already exists
+        const [existing] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
+        if (existing && existing.length > 0) {
+            return res.status(400).json({ error: 'Email already exists' });
+        }
+        
         const hashedPassword = await bcrypt.hash(password, 10);
         await db.execute('INSERT INTO users (username, email, password) VALUES (?, ?, ?)', [username, email, hashedPassword]);
         res.status(201).json({ message: 'User registered successfully!' });
@@ -120,6 +127,7 @@ Be specific, practical and engaging. Use emojis for visual clarity.`;
         setCache(cacheKey, text);
         res.json({ itinerary: text });
     } catch (error) {
+        console.error("AI Generation Error:", error);
         // Smart fallback with personalized mock
         const fallback = generateFallbackItinerary(destination, days, budget, purpose);
         res.json({ itinerary: fallback, ai_fallback: true });
@@ -246,13 +254,21 @@ router.get('/nearby', async (req, res) => {
 function generateFallbackItinerary(destination, days, budget, purpose) {
     const dayBudget = Math.floor(budget / days);
     let itinerary = '';
+    const activities = [
+        ['Visit the primary historical landmarks.', 'Explore local art galleries and museums.', 'Walking tour of central squares.'],
+        ['Visit a nearby holy temple or spiritual center.', 'Explore bustling local markets and bazaars.', 'Try a traditional workshop or cooking class.'],
+        ['Relax at a local park or lakeside.', 'Discover offbeat street art and hidden alleys.', 'Take a bicycle tour of the countryside.'],
+        ['Hike or walk to a high viewpoint.', 'Visit a botanical garden or zoo.', 'Go on a local street food tasting tour.']
+    ];
+
     for (let d = 1; d <= days; d++) {
-        itinerary += `Day ${d} — Exploring ${destination}\n`;
-        itinerary += `🌅 Morning: Visit the iconic landmarks of ${destination}. Start early (7 AM) to beat crowds.\n`;
-        itinerary += `🌞 Afternoon: Explore local markets, taste regional street food and visit nearby attractions.\n`;
-        itinerary += `🌙 Evening: Enjoy a local cultural experience, sunset viewpoint, or riverside walk.\n`;
+        const actSet = activities[(d - 1) % activities.length];
+        itinerary += `Day ${d} — ${d === 1 ? 'Arrival & Welcome' : d === days ? 'Memories & Departure' : 'Deeper Exploration'} in ${destination}\n`;
+        itinerary += `🌅 Morning: ${actSet[0]} Start early to enjoy the best weather.\n`;
+        itinerary += `🌞 Afternoon: ${actSet[1]} Sample authentic local flavors for lunch.\n`;
+        itinerary += `🌙 Evening: ${actSet[2]} Reflection at sunset and a relaxing local dinner.\n`;
         itinerary += `💰 Estimated Day Cost: ₹${dayBudget.toLocaleString('en-IN')}\n`;
-        itinerary += `💡 Pro Tip: Talk to locals for hidden gems that no travel guide mentions!\n\n`;
+        itinerary += `💡 Pro Tip: ${d % 2 === 0 ? 'Ask a local for their favorite hidden cafe.' : 'Bargain politely at markets for the best prices.'}\n\n`;
     }
     return itinerary.trim();
 }
