@@ -196,10 +196,19 @@ export default function Explore() {
                 <div className="info-section">
                   <div className="section-title-row">
                     <h4><Info size={18} /> About {selected.name}</h4>
-                    <a href={`https://www.google.com/maps/search/${selected.name}+${selected.state}`}
-                      target="_blank" rel="noreferrer" className="map-link">📍 View on Maps</a>
                   </div>
                   <p>{selected.description}</p>
+                  <div className="map-embed" style={{ marginTop: '1.5rem', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <iframe
+                      title="Google Maps Location"
+                      width="100%"
+                      height="250"
+                      style={{ border: 0, filter: 'grayscale(100%) invert(90%) contrast(80%)' }}
+                      loading="lazy"
+                      allowFullScreen
+                      src={`https://www.google.com/maps?q=${encodeURIComponent(selected.name + ' ' + selected.state)}&output=embed`}
+                    ></iframe>
+                  </div>
                 </div>
 
                 {/* Info Grid */}
