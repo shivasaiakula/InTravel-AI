@@ -81,24 +81,71 @@ function composeItineraryText(days) {
     .join('\n\n');
 }
 
+function buildUniqueDayBlock(dayNo, destination, perDay) {
+  const activityPool = [
+    {
+      title: `Heritage Walk in ${destination}`,
+      morning: 'Start with a landmark walk and local breakfast spot.',
+      afternoon: 'Visit one museum or fort and a nearby artisan lane.',
+      evening: 'Attend a cultural show or sunset promenade.',
+    },
+    {
+      title: `${destination} Food Trail`,
+      morning: 'Explore a local market and try regional snacks.',
+      afternoon: 'Book a guided food tour with 3-4 signature dishes.',
+      evening: 'Relax at a cafe district and sample dessert specials.',
+    },
+    {
+      title: `${destination} Nature Circuit`,
+      morning: 'Visit a park, lake, or scenic viewpoint early.',
+      afternoon: 'Take a short activity session or nature trail.',
+      evening: 'Plan a calm neighborhood walk and photo stop.',
+    },
+    {
+      title: `Hidden Gems of ${destination}`,
+      morning: 'Cover less-crowded alleys and local architecture gems.',
+      afternoon: 'Try a workshop or hands-on local craft experience.',
+      evening: 'Explore a popular market street before dinner.',
+    },
+  ];
+
+  const pick = activityPool[(dayNo - 1) % activityPool.length];
+  return {
+    title: `Day ${dayNo} - ${pick.title}`,
+    content: [
+      `Morning: ${pick.morning}`,
+      `Afternoon: ${pick.afternoon}`,
+      `Evening: ${pick.evening}`,
+      `Estimated Cost: ₹${perDay.toLocaleString('en-IN')}`,
+      `Pro Tip: Keep 30-45 mins buffer for local discoveries on Day ${dayNo}.`,
+    ].join('\n'),
+  };
+}
+
 function normalizeItineraryDays(rawText, formData) {
   const requestedDays = Math.min(30, Math.max(1, Number(formData.days) || 1));
   const parsed = parseItineraryDays(rawText);
   const normalized = [...parsed].slice(0, requestedDays);
   const perDay = Math.max(500, Math.floor((Number(formData.budget) || 0) / requestedDays));
 
+  const seenBlocks = new Set();
+  for (let i = 0; i < normalized.length; i += 1) {
+    const fingerprint = (normalized[i].content || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!fingerprint) {
+      normalized[i] = buildUniqueDayBlock(i + 1, formData.destination || 'your destination', perDay);
+      continue;
+    }
+
+    if (seenBlocks.has(fingerprint)) {
+      normalized[i] = buildUniqueDayBlock(i + 1, formData.destination || 'your destination', perDay);
+    } else {
+      seenBlocks.add(fingerprint);
+    }
+  }
+
   while (normalized.length < requestedDays) {
     const dayNo = normalized.length + 1;
-    normalized.push({
-      title: `Day ${dayNo} - Curated plan for ${formData.destination}`,
-      content: [
-        'Morning: Explore a signature local attraction and nearby streets.',
-        'Afternoon: Enjoy a regional meal and one cultural experience.',
-        'Evening: Unwind with a sunset viewpoint or local market walk.',
-        `Estimated Cost: ₹${perDay.toLocaleString('en-IN')}`,
-        'Pro Tip: Keep one flexible hour for hidden gems recommended by locals.',
-      ].join('\n'),
-    });
+    normalized.push(buildUniqueDayBlock(dayNo, formData.destination || 'your destination', perDay));
   }
 
   const itinerary = composeItineraryText(normalized);
