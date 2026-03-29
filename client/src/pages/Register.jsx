@@ -7,15 +7,17 @@ function Register() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [err, setErr] = useState('');
   const navigate = useNavigate();
 
   const handleRegister = async (e) => {
     e.preventDefault();
+    setErr('');
     try {
       await axios.post('/api/register', { username, email, password });
       navigate('/login');
     } catch (error) {
-      alert('Registration failed');
+      setErr(error?.response?.data?.error || 'Registration failed');
     }
   };
 
@@ -24,6 +26,7 @@ function Register() {
       <div className="auth-card glass-card fade-in">
         <h2 className="heading-gradient">Create Account</h2>
         <p>Join InTravel AI and start exploring India</p>
+        {err && <p className="error">{err}</p>}
         <form onSubmit={handleRegister}>
           <div className="form-group">
             <label>Username</label>

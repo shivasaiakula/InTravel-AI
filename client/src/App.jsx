@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Home from './pages/Home';
@@ -13,7 +13,20 @@ import Gamification from './pages/Gamification';
 import Packing from './pages/Packing';
 import Chatbot from './components/Chatbot';
 
+function getThemeByMonth(monthIndex) {
+  if (monthIndex >= 2 && monthIndex <= 4) return 'forest-monsoon';
+  if (monthIndex >= 5 && monthIndex <= 7) return 'coastal-breeze';
+  if (monthIndex >= 10 || monthIndex <= 1) return 'midnight-luxe';
+  return 'desert-sunrise';
+}
+
 function App() {
+  useEffect(() => {
+    const storedTheme = localStorage.getItem('intravel-theme');
+    const activeTheme = storedTheme || getThemeByMonth(new Date().getMonth());
+    document.documentElement.setAttribute('data-season-theme', activeTheme);
+  }, []);
+
   return (
     <div className="App">
       <Navbar />

@@ -14,21 +14,53 @@ const cache = new Map();
 function getCached(key) { const v = cache.get(key); if (v && Date.now() - v.ts < 600000) return v.data; }
 function setCache(key, data) { cache.set(key, { data, ts: Date.now() }); }
 
+// Local auth fallback to keep login/register working when DB is not configured.
+const localUsersByEmail = new Map();
+
+function isDatabaseUnavailable(error) {
+    const msg = String(error?.message || '').toLowerCase();
+    return msg.includes('access denied')
+        || msg.includes('connect')
+        || msg.includes('econnrefused')
+        || msg.includes('er_access_denied_error')
+        || msg.includes('unknown database')
+        || msg.includes('doesn\'t exist');
+}
+
 // ── AUTH ROUTES ──
 router.post('/register', async (req, res) => {
     try {
         const { username, email, password } = req.body;
-        
+
         // Check if user already exists
         const [existing] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
         if (existing && existing.length > 0) {
             return res.status(400).json({ error: 'Email already exists' });
         }
-        
+
         const hashedPassword = await bcrypt.hash(password, 10);
         await db.execute('INSERT INTO users (username, email, password) VALUES (?, ?, ?)', [username, email, hashedPassword]);
         res.status(201).json({ message: 'User registered successfully!' });
     } catch (error) {
+        if (isDatabaseUnavailable(error)) {
+            const { username, email, password } = req.body;
+            if (!username || !email || !password) {
+                return res.status(400).json({ error: 'Username, email, and password are required' });
+            }
+
+            if (localUsersByEmail.has(email)) {
+                return res.status(400).json({ error: 'Email already exists' });
+            }
+
+            const hashedPassword = await bcrypt.hash(password, 10);
+            localUsersByEmail.set(email, {
+                id: Date.now(),
+                username,
+                email,
+                password: hashedPassword,
+            });
+            return res.status(201).json({ message: 'User registered successfully (local mode)' });
+        }
         res.status(500).json({ error: error.message });
     }
 });
@@ -38,13 +70,24 @@ router.post('/login', async (req, res) => {
         const { email, password } = req.body;
         const [users] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
         if (users.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
-        
+
         const valid = await bcrypt.compare(password, users[0].password);
         if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-        
+
         const token = jwt.sign({ id: users[0].id, username: users[0].username }, process.env.JWT_SECRET || 'secret', { expiresIn: '7d' });
         res.json({ token, user: { id: users[0].id, username: users[0].username } });
     } catch (error) {
+        if (isDatabaseUnavailable(error)) {
+            const { email, password } = req.body;
+            const user = localUsersByEmail.get(email);
+            if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+
+            const valid = await bcrypt.compare(password, user.password);
+            if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+
+            const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET || 'secret', { expiresIn: '7d' });
+            return res.json({ token, user: { id: user.id, username: user.username } });
+        }
         res.status(500).json({ error: error.message });
     }
 });
@@ -87,19 +130,19 @@ router.get('/hotels', async (req, res) => {
 // ── AI TRIP PLANNER (ENHANCED) ──
 router.post('/ai/plan', async (req, res) => {
     const { destination, days, budget, purpose, budgetTier, styles, travelers } = req.body;
-    
+
     const cacheKey = `plan:${destination}:${days}:${budget}:${purpose}`;
     const cached = getCached(cacheKey);
     if (cached) return res.json({ itinerary: cached, cached: true });
-    
+
     try {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        
+
         const purposeContext = purpose ? `This is a ${purpose} trip.` : '';
         const styleContext = styles?.length > 0 ? `Travel preferences: ${styles.join(', ')}.` : '';
         const travelersCtx = travelers ? `Traveling with ${travelers} person(s).` : '';
         const tierCtx = budgetTier ? `Budget category: ${budgetTier}.` : '';
-        
+
         const prompt = `Create a detailed ${days}-day travel itinerary for ${destination}, India.
         
 Budget: ₹${budget} total. ${tierCtx}
@@ -121,7 +164,7 @@ Include:
 - Cost breakdown summary at the end
 
 Be specific, practical and engaging. Use emojis for visual clarity.`;
-        
+
         const result = await model.generateContent(prompt);
         const text = result.response.text();
         setCache(cacheKey, text);
@@ -144,20 +187,20 @@ router.post('/ai/chat', async (req, res) => {
 User Query: "${message}"
 
 Respond in 2-4 sentences. Be friendly, specific, and add one actionable tip. Use an occasional emoji. Always mention specific places, costs in ₹, or exact timing when relevant.`;
-        
+
         const result = await model.generateContent(prompt);
         res.json({ reply: result.response.text() });
     } catch (error) {
         // Category-aware fallbacks
         const msg = message.toLowerCase();
         let reply = "India has amazing destinations! Tell me more about what you're looking for.";
-        
+
         if (msg.includes('goa')) reply = "Goa is best visited from November to February 🏖️. North Goa is lively with beach shacks and nightlife (Baga, Calangute), while South Goa is quieter and cleaner (Palolem, Agonda). Budget: ₹2,000-3,000/day for mid-range travel. Pro tip: Rent a scooter (₹300/day) for the most authentic experience!";
         else if (msg.includes('budget') || msg.includes('cheap')) reply = "For budget travel in India, aim for ₹800-1,500/day including dorm hostel, local meals at dhabas, and buses/trains. Avoid tourist traps near monuments — walk 2 streets away for authentic food at half the price 💰.";
         else if (msg.includes('ladakh')) reply = "Ladakh is best visited June-September 🏔️. The Leh-Manali Highway opens in June and Leh-Srinagar all year. Acclimatize for 2 days before any high-altitude activities. Budget: ₹2,500-4,000/day. Inner Line Permit required for Nubra Valley and Pangong!";
         else if (msg.includes('kerala')) reply = "Kerala is magical year-round! 🌴 Monsoon (June-August) is underrated and cheaper. Must-do: Alleppey houseboat (₹3,000-8,000/night), Munnar tea gardens, and Kovalam beach. Train from Chennai to Kerala takes ~10 hours and costs under ₹500.";
         else if (msg.includes('hill station') || msg.includes('mountains')) reply = "Top hill stations in India: Manali (Himachal), Darjeeling (West Bengal), Coorg (Karnataka), Ooty (Tamil Nadu), Mussoorie (Uttarakhand) ⛰️. Best season is March-June before monsoon. Each offers unique experiences from snow sports to tea garden walks!";
-        
+
         res.json({ reply });
     }
 });
@@ -174,10 +217,10 @@ router.get('/weather/:city', async (req, res) => {
         wind: Math.floor(Math.random() * 20 + 5),
         uv: Math.floor(Math.random() * 6 + 4),
         forecast: Array.from({ length: 5 }, (_, i) => ({
-            day: ['Mon','Tue','Wed','Thu','Fri'][i],
+            day: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'][i],
             high: Math.floor(Math.random() * 8 + 25),
             low: Math.floor(Math.random() * 8 + 15),
-            icon: ['☀️','🌤️','⛅','🌦️','☀️'][i],
+            icon: ['☀️', '🌤️', '⛅', '🌦️', '☀️'][i],
         })),
     };
     res.json(data);
@@ -190,7 +233,7 @@ router.get('/crowd/:destination', async (req, res) => {
     const hour = new Date().getHours();
     const isPeakHour = hour >= 10 && hour <= 17;
     const levelIdx = isPeakHour ? Math.floor(Math.random() * 2 + 2) : Math.floor(Math.random() * 2);
-    
+
     res.json({
         destination,
         currentCrowd: levels[levelIdx],
