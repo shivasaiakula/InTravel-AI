@@ -77,11 +77,17 @@ const features = [
   { icon: <Award />, label: 'Rewards', desc: 'Earn badges, unlock achievements, and level up your travel persona.', color: '#06b6d4', link: '/gamification' },
 ];
 
-const seasonThemes = [
-  { id: 'spring', label: 'Spring', emoji: '🌸' },
-  { id: 'summer', label: 'Summer', emoji: '☀️' },
-  { id: 'monsoon', label: 'Monsoon', emoji: '🌧️' },
-  { id: 'winter', label: 'Winter', emoji: '❄️' },
+const visualThemes = [
+  { id: 'desert-sunrise', label: 'Desert', emoji: '🏜️', swatch: ['#f97316', '#facc15'] },
+  { id: 'himalayan-mist', label: 'Himalayan', emoji: '🏔️', swatch: ['#60a5fa', '#a78bfa'] },
+  { id: 'coastal-breeze', label: 'Coastal', emoji: '🌊', swatch: ['#06b6d4', '#22d3ee'] },
+  { id: 'temple-gold', label: 'Temple', emoji: '🛕', swatch: ['#f59e0b', '#fb7185'] },
+  { id: 'forest-monsoon', label: 'Forest', emoji: '🌿', swatch: ['#22c55e', '#38bdf8'] },
+  { id: 'festival-neon', label: 'Neon', emoji: '🎆', swatch: ['#ec4899', '#f59e0b'] },
+  { id: 'vintage-map', label: 'Vintage', emoji: '🗺️', swatch: ['#a16207', '#65a30d'] },
+  { id: 'midnight-luxe', label: 'Luxe', emoji: '🌌', swatch: ['#6366f1', '#14b8a6'] },
+  { id: 'candy-pop', label: 'Candy', emoji: '🍬', swatch: ['#f472b6', '#f59e0b'] },
+  { id: 'minimal-light', label: 'Minimal', emoji: '✨', swatch: ['#2563eb', '#64748b'] },
 ];
 
 const liveDeals = [
@@ -93,11 +99,11 @@ const liveDeals = [
   { tag: 'Stay', route: 'Kerala Houseboat', fare: 'Rs 5,400/night', note: 'Sunset package' },
 ];
 
-function getSeasonThemeByMonth(monthIndex) {
-  if (monthIndex >= 2 && monthIndex <= 4) return 'spring';
-  if (monthIndex >= 5 && monthIndex <= 7) return 'monsoon';
-  if (monthIndex >= 10 || monthIndex <= 1) return 'winter';
-  return 'summer';
+function getThemeByMonth(monthIndex) {
+  if (monthIndex >= 2 && monthIndex <= 4) return 'forest-monsoon';
+  if (monthIndex >= 5 && monthIndex <= 7) return 'coastal-breeze';
+  if (monthIndex >= 10 || monthIndex <= 1) return 'midnight-luxe';
+  return 'desert-sunrise';
 }
 
 function buildPreviewItinerary({ destination, days, budget, vibe }) {
@@ -133,14 +139,23 @@ function buildPreviewItinerary({ destination, days, budget, vibe }) {
 
 export default function Home() {
   const [activeCategory, setActiveCategory] = useState(null);
-  const [seasonTheme, setSeasonTheme] = useState(() => getSeasonThemeByMonth(new Date().getMonth()));
+  const [seasonTheme, setSeasonTheme] = useState(() => {
+    const storedTheme = localStorage.getItem('intravel-theme');
+    if (storedTheme) return storedTheme;
+    return getThemeByMonth(new Date().getMonth());
+  });
   const [previewInput, setPreviewInput] = useState({ destination: 'Jaipur', days: 4, budget: 22000, vibe: 'culture' });
   const [previewPlan, setPreviewPlan] = useState(() => buildPreviewItinerary({ destination: 'Jaipur', days: 4, budget: 22000, vibe: 'culture' }));
   const [weatherData] = useState({ temp: 28, condition: 'Sunny', city: 'Delhi' });
 
   useEffect(() => {
     document.documentElement.setAttribute('data-season-theme', seasonTheme);
+    localStorage.setItem('intravel-theme', seasonTheme);
   }, [seasonTheme]);
+
+  function resetThemeToAuto() {
+    setSeasonTheme(getThemeByMonth(new Date().getMonth()));
+  }
 
   function handlePreviewSubmit(event) {
     event.preventDefault();
@@ -156,13 +171,26 @@ export default function Home() {
             <h3><TrendingUp size={18} /> Real-time travel drops and flash offers</h3>
           </div>
           <div className="season-toggle" role="group" aria-label="Seasonal theme switcher">
-            {seasonThemes.map((season) => (
+            <button
+              type="button"
+              className="season-pill season-auto"
+              onClick={resetThemeToAuto}
+              title="Use automatic monthly theme"
+            >
+              <span>Auto</span>
+            </button>
+            {visualThemes.map((season) => (
               <button
                 key={season.id}
                 type="button"
                 className={`season-pill ${seasonTheme === season.id ? 'active' : ''}`}
                 onClick={() => setSeasonTheme(season.id)}
               >
+                <span
+                  className="season-swatch"
+                  style={{ '--sw-a': season.swatch[0], '--sw-b': season.swatch[1] }}
+                  aria-hidden="true"
+                />
                 <span>{season.emoji}</span>
                 <span>{season.label}</span>
               </button>

@@ -98,11 +98,13 @@
 .season-toggle {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.35rem;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border-radius: 14px;
   padding: 0.3rem;
+  max-width: 680px;
 }
 
 .season-pill {
@@ -117,6 +119,20 @@
   align-items: center;
   gap: 0.35rem;
   transition: all 0.25s ease;
+}
+
+.season-auto {
+  border: 1px dashed var(--glass-border);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.season-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  background: linear-gradient(135deg, var(--sw-a), var(--sw-b));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
 }
 
 .season-pill:hover {
@@ -834,7 +850,7 @@
 
   .season-toggle {
     width: 100%;
-    justify-content: space-between;
+    justify-content: flex-start;
   }
 
   .hero-title {
