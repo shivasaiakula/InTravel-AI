@@ -38,6 +38,7 @@ function Login() {
           </div>
           <button type="submit" className="button-primary w-full">Sign In</button>
         </form>
+        <p className="auth-link-row"><Link to="/forgot-password">Forgot password?</Link></p>
         <p className="auth-footer">Don't have an account? <Link to="/register">Sign Up</Link></p>
       </div>
     </div>

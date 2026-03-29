@@ -54,6 +54,10 @@ export default function BudgetPage() {
   const totalActual = categories.reduce((s, c) => s + c.actual, 0);
   const savings = totalBudget - totalActual;
   const overBudgetCats = categories.filter(c => c.actual > c.budget);
+  const budgetPerDay = Math.max(1, Math.floor(totalBudget / Math.max(1, days)));
+  const riskLevel = budgetPerDay < 3500 ? 'High' : budgetPerDay < 7000 ? 'Medium' : 'Low';
+  const riskScore = riskLevel === 'High' ? 84 : riskLevel === 'Medium' ? 54 : 24;
+  const riskColor = riskLevel === 'High' ? '#f43f5e' : riskLevel === 'Medium' ? '#f59e0b' : '#10b981';
 
   const donutData = {
     labels: categories.map(c => c.name),
@@ -143,7 +147,24 @@ export default function BudgetPage() {
               {savings >= 0 ? '+' : ''}₹{savings.toLocaleString('en-IN')}
             </strong>
           </div>
+          <div className="cfg-stat">
+            <span>Risk</span>
+            <strong style={{ color: riskColor }}>{riskLevel}</strong>
+          </div>
         </div>
+      </motion.div>
+
+      <motion.div className="budget-risk-bar glass-card" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+        <div className="budget-risk-head">
+          <strong>Budget Risk Meter</strong>
+          <span style={{ color: riskColor }}>{riskLevel} ({riskScore}%)</span>
+        </div>
+        <div className="budget-risk-track">
+          <div className="budget-risk-fill" style={{ width: `${riskScore}%`, background: riskColor }} />
+        </div>
+        <p>
+          Daily availability is ₹{budgetPerDay.toLocaleString('en-IN')}. Keep accommodation and transport within 55% total for safer spend control.
+        </p>
       </motion.div>
 
       {/* Summary Cards */}

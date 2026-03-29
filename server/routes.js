@@ -16,6 +16,7 @@ function setCache(key, data) { cache.set(key, { data, ts: Date.now() }); }
 
 // Local auth fallback to keep login/register working when DB is not configured.
 const localUsersByEmail = new Map();
+const resetOtpStore = new Map();
 
 function isDatabaseUnavailable(error) {
     const msg = String(error?.message || '').toLowerCase();
@@ -25,6 +26,24 @@ function isDatabaseUnavailable(error) {
         || msg.includes('er_access_denied_error')
         || msg.includes('unknown database')
         || msg.includes('doesn\'t exist');
+}
+
+function generateOtp() {
+    return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+async function findUserByEmail(email) {
+    try {
+        const [users] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
+        if (users.length > 0) {
+            return { source: 'db', user: users[0] };
+        }
+        return { source: 'db', user: null };
+    } catch (error) {
+        if (!isDatabaseUnavailable(error)) throw error;
+        const local = localUsersByEmail.get(email) || null;
+        return { source: 'local', user: local };
+    }
 }
 
 // ── AUTH ROUTES ──
@@ -92,6 +111,59 @@ router.post('/login', async (req, res) => {
     }
 });
 
+router.post('/auth/request-reset', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ error: 'Email is required' });
+
+        const { user } = await findUserByEmail(email);
+        if (!user) return res.status(404).json({ error: 'Account not found for this email' });
+
+        const otp = generateOtp();
+        resetOtpStore.set(email, { otp, expiresAt: Date.now() + 10 * 60 * 1000 });
+
+        // OTP email provider can be plugged in here. For now return OTP in dev mode.
+        return res.json({ message: 'OTP generated. It expires in 10 minutes.', debugOtp: otp });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/auth/verify-reset', async (req, res) => {
+    try {
+        const { email, otp, newPassword } = req.body;
+        if (!email || !otp || !newPassword) {
+            return res.status(400).json({ error: 'Email, otp, and newPassword are required' });
+        }
+
+        const otpEntry = resetOtpStore.get(email);
+        if (!otpEntry) return res.status(400).json({ error: 'No OTP request found for this email' });
+        if (Date.now() > otpEntry.expiresAt) {
+            resetOtpStore.delete(email);
+            return res.status(400).json({ error: 'OTP expired. Request a new one.' });
+        }
+        if (String(otpEntry.otp) !== String(otp)) {
+            return res.status(400).json({ error: 'Invalid OTP' });
+        }
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        try {
+            await db.execute('UPDATE users SET password = ? WHERE email = ?', [hashedPassword, email]);
+        } catch (error) {
+            if (!isDatabaseUnavailable(error)) throw error;
+            const user = localUsersByEmail.get(email);
+            if (!user) return res.status(404).json({ error: 'Account not found for this email' });
+            localUsersByEmail.set(email, { ...user, password: hashedPassword });
+        }
+
+        resetOtpStore.delete(email);
+        return res.json({ message: 'Password reset successful. Please login.' });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
 // ── DESTINATION ROUTES ──
 router.get('/destinations', async (req, res) => {
     try {
@@ -130,6 +202,7 @@ router.get('/hotels', async (req, res) => {
 // ── AI TRIP PLANNER (ENHANCED) ──
 router.post('/ai/plan', async (req, res) => {
     const { destination, days, budget, purpose, budgetTier, styles, travelers } = req.body;
+    const requestedDays = Math.min(30, Math.max(1, Number(days) || 1));
 
     const cacheKey = `plan:${destination}:${days}:${budget}:${purpose}`;
     const cached = getCached(cacheKey);
@@ -167,12 +240,13 @@ Be specific, practical and engaging. Use emojis for visual clarity.`;
 
         const result = await model.generateContent(prompt);
         const text = result.response.text();
-        setCache(cacheKey, text);
-        res.json({ itinerary: text });
+        const normalized = ensureItineraryHasAllDays(text, requestedDays, destination, budget);
+        setCache(cacheKey, normalized);
+        res.json({ itinerary: normalized });
     } catch (error) {
         console.error("AI Generation Error:", error);
         // Smart fallback with personalized mock
-        const fallback = generateFallbackItinerary(destination, days, budget, purpose);
+        const fallback = generateFallbackItinerary(destination, requestedDays, budget, purpose);
         res.json({ itinerary: fallback, ai_fallback: true });
     }
 });
@@ -356,6 +430,41 @@ function generateFallbackItinerary(destination, days, budget, purpose) {
         itinerary += `💡 Pro Tip: ${d % 2 === 0 ? 'Ask a local for their favorite hidden cafe.' : 'Bargain politely at markets for the best prices.'}\n\n`;
     }
     return itinerary.trim();
+}
+
+function ensureItineraryHasAllDays(text, requestedDays, destination, budget) {
+    if (!text || typeof text !== 'string') {
+        return generateFallbackItinerary(destination, requestedDays, budget || 20000, 'general');
+    }
+
+    const dayRegex = /(^|\n)\s*Day\s*\d+\s*[-–—:]?\s*[^\n]*/gim;
+    const matches = [...text.matchAll(dayRegex)];
+    if (matches.length === 0) {
+        return generateFallbackItinerary(destination, requestedDays, budget || 20000, 'general');
+    }
+
+    const blocks = matches.map((match, index) => {
+        const start = match.index + match[1].length;
+        const end = index < matches.length - 1 ? matches[index + 1].index : text.length;
+        return text.slice(start, end).trim();
+    }).slice(0, requestedDays);
+
+    const safeBudget = Math.max(5000, Number(budget) || 20000);
+    const perDay = Math.floor(safeBudget / requestedDays);
+
+    while (blocks.length < requestedDays) {
+        const dayNo = blocks.length + 1;
+        blocks.push([
+            `Day ${dayNo} - Additional curated plan for ${destination}`,
+            '🌅 Morning: Visit a top local attraction and nearby old streets.',
+            '🌞 Afternoon: Enjoy a regional meal and one cultural activity.',
+            '🌙 Evening: Explore a market promenade and relax with local tea.',
+            `💰 Estimated Day Cost: ₹${perDay.toLocaleString('en-IN')}`,
+            '💡 Pro Tip: Keep 1-2 flexible hours for local recommendations.',
+        ].join('\n'));
+    }
+
+    return blocks.join('\n\n');
 }
 
 // ── MOCK DATA ──

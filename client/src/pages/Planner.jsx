@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useMemo, useState } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
-import { 
+import {
   Sparkles, Calendar, MapPin, Calculator, Save, CheckCircle2,
   Heart, Users, User, Baby, Mountain, Sun, Briefcase, GripVertical,
   ChevronDown, ChevronUp, Wallet, Clock, Star, Zap, RefreshCw,
@@ -55,6 +55,76 @@ function DayCard({ day, idx, onToggle, isOpen }) {
   );
 }
 
+function parseItineraryDays(text) {
+  if (!text || typeof text !== 'string') return [];
+  const regex = /(^|\n)\s*Day\s*(\d+)\s*[-–—:]?\s*([^\n]*)/gim;
+  const matches = [...text.matchAll(regex)];
+  if (matches.length === 0) return [];
+
+  return matches.map((match, index) => {
+    const start = match.index + match[1].length;
+    const nextStart = index < matches.length - 1 ? matches[index + 1].index : text.length;
+    const block = text.slice(start, nextStart).trim();
+    const lines = block.split('\n');
+    const titleLine = lines[0] || `Day ${index + 1}`;
+    const content = lines.slice(1).join('\n').trim();
+    return {
+      title: titleLine.trim(),
+      content,
+    };
+  });
+}
+
+function composeItineraryText(days) {
+  return days
+    .map((day, idx) => `Day ${idx + 1} - ${day.title.replace(/^Day\s*\d+\s*[-–—:]?\s*/i, '')}\n${day.content}`.trim())
+    .join('\n\n');
+}
+
+function normalizeItineraryDays(rawText, formData) {
+  const requestedDays = Math.min(30, Math.max(1, Number(formData.days) || 1));
+  const parsed = parseItineraryDays(rawText);
+  const normalized = [...parsed].slice(0, requestedDays);
+  const perDay = Math.max(500, Math.floor((Number(formData.budget) || 0) / requestedDays));
+
+  while (normalized.length < requestedDays) {
+    const dayNo = normalized.length + 1;
+    normalized.push({
+      title: `Day ${dayNo} - Curated plan for ${formData.destination}`,
+      content: [
+        'Morning: Explore a signature local attraction and nearby streets.',
+        'Afternoon: Enjoy a regional meal and one cultural experience.',
+        'Evening: Unwind with a sunset viewpoint or local market walk.',
+        `Estimated Cost: ₹${perDay.toLocaleString('en-IN')}`,
+        'Pro Tip: Keep one flexible hour for hidden gems recommended by locals.',
+      ].join('\n'),
+    });
+  }
+
+  const itinerary = composeItineraryText(normalized);
+  return {
+    requestedDays,
+    generatedDays: normalized.length,
+    isComplete: normalized.length === requestedDays,
+    days: normalized,
+    itinerary,
+  };
+}
+
+function getBudgetRiskLevel(budget, days, travelers) {
+  const safeDays = Math.max(1, Number(days) || 1);
+  const safeTravelers = Math.max(1, Number(travelers) || 1);
+  const budgetPerPersonPerDay = Math.floor((Number(budget) || 0) / (safeDays * safeTravelers));
+
+  if (budgetPerPersonPerDay < 1200) {
+    return { level: 'High', score: 85, color: '#f43f5e', note: 'Very tight for transport + stay + activities.' };
+  }
+  if (budgetPerPersonPerDay < 2500) {
+    return { level: 'Medium', score: 55, color: '#f59e0b', note: 'Doable with selective experiences and cost control.' };
+  }
+  return { level: 'Low', score: 22, color: '#10b981', note: 'Comfortable range with room for premium activities.' };
+}
+
 export default function Planner() {
   const [step, setStep] = useState(1); // 1=purpose, 2=details, 3=result
   const [formData, setFormData] = useState({
@@ -68,6 +138,9 @@ export default function Planner() {
   });
   const [itinerary, setItinerary] = useState(null);
   const [parsedDays, setParsedDays] = useState([]);
+  const [planCoverage, setPlanCoverage] = useState({ requestedDays: 0, generatedDays: 0, isComplete: false });
+  const [itineraryVersions, setItineraryVersions] = useState([]);
+  const [compareVersionId, setCompareVersionId] = useState('');
   const [openDays, setOpenDays] = useState([0]);
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -77,23 +150,60 @@ export default function Planner() {
   const [processingPayment, setProcessingPayment] = useState(false);
   const user = JSON.parse(localStorage.getItem('user'));
 
+  const plannerRisk = useMemo(
+    () => getBudgetRiskLevel(formData.budget, formData.days, formData.travelers),
+    [formData.budget, formData.days, formData.travelers],
+  );
+
+  const activeComparison = useMemo(() => {
+    if (!compareVersionId || itineraryVersions.length < 1) return null;
+    const compareWith = itineraryVersions.find((item) => String(item.id) === String(compareVersionId));
+    const latest = itineraryVersions[0];
+    if (!compareWith || !latest) return null;
+    return {
+      latest,
+      compareWith,
+      dayDelta: latest.formSnapshot.days - compareWith.formSnapshot.days,
+      budgetDelta: latest.formSnapshot.budget - compareWith.formSnapshot.budget,
+      destinationChanged: latest.formSnapshot.destination !== compareWith.formSnapshot.destination,
+    };
+  }, [compareVersionId, itineraryVersions]);
+
+  function applyGeneratedPlan(rawItinerary, sourceLabel) {
+    const normalized = normalizeItineraryDays(rawItinerary, formData);
+    setItinerary(normalized.itinerary);
+    setParsedDays(normalized.days);
+    setPlanCoverage({
+      requestedDays: normalized.requestedDays,
+      generatedDays: normalized.generatedDays,
+      isComplete: normalized.isComplete,
+    });
+    setOpenDays([0]);
+
+    const version = {
+      id: Date.now(),
+      createdAt: new Date().toLocaleString(),
+      source: sourceLabel,
+      itinerary: normalized.itinerary,
+      days: normalized.days,
+      formSnapshot: { ...formData },
+    };
+
+    setItineraryVersions((prev) => [version, ...prev].slice(0, 8));
+  }
+
   const handleGenerate = async (e) => {
     e?.preventDefault();
     if (isPremium && !showCheckout) {
-       setShowCheckout(true);
-       return;
+      setShowCheckout(true);
+      return;
     }
     setLoading(true);
     setSaved(false);
     try {
       const { data } = await axios.post('/api/ai/plan', formData);
-      setItinerary(data.itinerary);
-      
-      // Parse itinerary into day cards
-      const days = parseItinerary(data.itinerary);
-      setParsedDays(days);
-      setOpenDays([0]);
-      
+      applyGeneratedPlan(data.itinerary || '', data.cached ? 'cached' : 'ai');
+
       // Simulate trip score
       setScore({
         overall: Math.floor(Math.random() * 15) + 80,
@@ -105,12 +215,8 @@ export default function Planner() {
       setStep(3);
     } catch (err) {
       console.error(err);
-      // Fallback mock
-      const mockItinerary = generateMockItinerary(formData);
-      setItinerary(mockItinerary);
-      const days = parseItinerary(mockItinerary);
-      setParsedDays(days);
-      setOpenDays([0]);
+      // Fallback plan still respects exact day count.
+      applyGeneratedPlan('', 'fallback');
       setScore({ overall: 88, value: 85, experience: 90, efficiency: 87 });
       setStep(3);
     }
@@ -131,36 +237,16 @@ export default function Planner() {
     }
   };
 
-  const parseItinerary = (text) => {
-    const dayRegex = /Day\s*\d+/gi;
-    const parts = text.split(dayRegex);
-    const matches = text.match(dayRegex) || [];
-    return matches.map((title, i) => ({
-      title: title + (parts[i + 1]?.split('\n')[0] || ''),
-      content: parts[i + 1]?.replace(parts[i + 1]?.split('\n')[0], '').trim() || parts[i + 1] || '',
-    }));
-  };
-
-  const generateMockItinerary = (form) => {
-    let itinerary = '';
-    const dayBudget = Math.floor(form.budget / form.days);
-    
-    const activityPatterns = [
-      { morning: 'Visit the main historical monument or attraction.', afternoon: 'Explore local markets and sample street food snacks.', evening: 'Enjoy a sunset viewpoint walk or cultural performance.' },
-      { morning: 'Explore hidden art galleries and boutique museums.', afternoon: 'Deeper dive into regional cuisine for lunch.', evening: 'Night market exploration or a rooftop dinner with views.' },
-      { morning: 'Quiet walk through the city gardens or lakeside.', afternoon: 'Visit a traditional handicraft workshop or emporium.', evening: 'Stargazing at a scenic spot or local home-cooked meal.' }
-    ];
-
-    for (let i = 1; i <= form.days; i++) {
-      const pattern = activityPatterns[(i-1) % activityPatterns.length];
-      itinerary += `Day ${i} – ${i === 1 ? 'Arrival & Orientation' : i === form.days ? 'Hidden Gems & Departure' : 'Deeper Exploration'} in ${form.destination}\n`;
-      itinerary += `Morning: ${i === 1 ? 'Arrive at destination and check in to your hotel.' : pattern.morning}\n`;
-      itinerary += `Afternoon: ${i === form.days ? 'Last minute souvenir shopping and last local meal.' : pattern.afternoon}\n`;
-      itinerary += `Evening: ${i === form.days ? 'Head to airport/station for departure.' : pattern.evening}\n`;
-      itinerary += `Estimated Cost: ₹${dayBudget}\n\n`;
-    }
-    return itinerary.trim();
-  };
+  function loadVersion(id) {
+    const version = itineraryVersions.find((item) => String(item.id) === String(id));
+    if (!version) return;
+    setFormData(version.formSnapshot);
+    setItinerary(version.itinerary);
+    setParsedDays(version.days);
+    setPlanCoverage({ requestedDays: version.formSnapshot.days, generatedDays: version.days.length, isComplete: version.days.length === version.formSnapshot.days });
+    setOpenDays([0]);
+    setStep(3);
+  }
 
   const toggleStyle = (style) => {
     setFormData(prev => ({
@@ -180,7 +266,7 @@ export default function Planner() {
     const startDate = new Date();
     const endDate = new Date();
     endDate.setDate(startDate.getDate() + formData.days);
-    
+
     try {
       await axios.post('/api/trips', {
         userId: user.id,
@@ -367,6 +453,16 @@ export default function Planner() {
               {/* Budget Preview */}
               <div className="budget-preview glass-card">
                 <h3><TrendingDown size={20} /> Budget Preview</h3>
+                <div className="risk-meter-box" style={{ '--risk-color': plannerRisk.color }}>
+                  <div className="risk-meter-top">
+                    <strong>Risk: {plannerRisk.level}</strong>
+                    <span>{plannerRisk.score}%</span>
+                  </div>
+                  <div className="risk-track">
+                    <div className="risk-fill" style={{ width: `${plannerRisk.score}%` }} />
+                  </div>
+                  <p>{plannerRisk.note}</p>
+                </div>
                 <div className="budget-breakdown">
                   {[
                     { label: 'Accommodation', pct: 35, icon: '🏨', color: '#6366f1' },
@@ -458,6 +554,12 @@ export default function Planner() {
                 <div className="result-header">
                   <h3>Day-wise Itinerary — {formData.destination}</h3>
                   <div className="result-actions">
+                    {planCoverage.requestedDays > 0 && (
+                      <span className={`saved-badge ${planCoverage.isComplete ? '' : 'warn'}`}>
+                        <CheckCircle2 size={16} />
+                        {planCoverage.generatedDays}/{planCoverage.requestedDays} days
+                      </span>
+                    )}
                     {saved ? (
                       <span className="saved-badge"><CheckCircle2 size={16} /> Saved!</span>
                     ) : (
@@ -467,6 +569,41 @@ export default function Planner() {
                     <button onClick={() => setStep(2)} className="button-secondary btn-sm"><RefreshCw size={14} /> Redo</button>
                   </div>
                 </div>
+
+                {itineraryVersions.length > 0 && (
+                  <div className="version-toolbar glass-card-sm">
+                    <div>
+                      <strong>Itinerary versions</strong>
+                      <p>Load previous generations or compare with the latest plan.</p>
+                    </div>
+                    <div className="version-actions">
+                      <select value={compareVersionId} onChange={(e) => setCompareVersionId(e.target.value)}>
+                        <option value="">Compare latest with...</option>
+                        {itineraryVersions.slice(1).map((version) => (
+                          <option key={version.id} value={version.id}>
+                            {version.formSnapshot.destination} | {version.formSnapshot.days}d | {version.createdAt}
+                          </option>
+                        ))}
+                      </select>
+                      <select onChange={(e) => e.target.value && loadVersion(e.target.value)} defaultValue="">
+                        <option value="">Load version...</option>
+                        {itineraryVersions.map((version) => (
+                          <option key={version.id} value={version.id}>
+                            {version.formSnapshot.destination} | {version.formSnapshot.days}d | {version.source}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {activeComparison && (
+                      <div className="version-compare-note">
+                        <span>Compared to selected plan:</span>
+                        <span>{activeComparison.dayDelta >= 0 ? '+' : ''}{activeComparison.dayDelta} day(s)</span>
+                        <span>{activeComparison.budgetDelta >= 0 ? '+' : ''}₹{Math.abs(activeComparison.budgetDelta).toLocaleString('en-IN')}</span>
+                        {activeComparison.destinationChanged && <span>Destination changed</span>}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="days-container">
                   {parsedDays.length > 0 ? (
@@ -512,7 +649,7 @@ export default function Planner() {
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>Generate a hyper-detailed, verified itinerary for {formData.destination}.</p>
             <div style={{ fontSize: '2.5rem', fontWeight: 800, marginBottom: '2rem', color: 'var(--text)' }}>₹499</div>
             <button className="button-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={handlePayment} disabled={processingPayment}>
-              {processingPayment ? <><RefreshCw size={16} className="spin-icon"/> Processing...</> : 'Pay with API (Mock)'}
+              {processingPayment ? <><RefreshCw size={16} className="spin-icon" /> Processing...</> : 'Pay with API (Mock)'}
             </button>
           </div>
         </div>
