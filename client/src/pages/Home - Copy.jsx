@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { motion, useInView } from 'framer-motion';
-import {
-  Compass, Calendar, Calculator, Sparkles, TrendingUp, MapPin,
-  Star, Users, Award, ArrowRight, Plane, ChevronRight, Zap
+import { motion, useAnimation, useInView } from 'framer-motion';
+import { 
+  Compass, Calendar, Calculator, Sparkles, TrendingUp, MapPin, 
+  Star, Users, Heart, Zap, Shield, Award, ArrowRight, Play,
+  Mountain, Sun, Cloud, Plane, Camera, Music, ChevronRight
 } from 'lucide-react';
 import './Home.css';
 
@@ -11,7 +12,7 @@ import './Home.css';
 function useCounter(end, duration = 2000) {
   const [count, setCount] = useState(0);
   const [started, setStarted] = useState(false);
-
+  
   useEffect(() => {
     if (!started) return;
     let start = 0;
@@ -23,7 +24,7 @@ function useCounter(end, duration = 2000) {
     }, 16);
     return () => clearInterval(timer);
   }, [started, end, duration]);
-
+  
   return [count, () => setStarted(true)];
 }
 
@@ -31,9 +32,9 @@ function StatItem({ end, label, suffix = '' }) {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true });
   const [count, start] = useCounter(end);
-
+  
   useEffect(() => { if (isInView) start(); }, [isInView]);
-
+  
   return (
     <div ref={ref} className="stat-counter">
       <span className="stat-number heading-gradient">{count.toLocaleString()}{suffix}</span>
@@ -77,113 +78,12 @@ const features = [
   { icon: <Award />, label: 'Rewards', desc: 'Earn badges, unlock achievements, and level up your travel persona.', color: '#06b6d4', link: '/gamification' },
 ];
 
-const seasonThemes = [
-  { id: 'spring', label: 'Spring', emoji: '🌸' },
-  { id: 'summer', label: 'Summer', emoji: '☀️' },
-  { id: 'monsoon', label: 'Monsoon', emoji: '🌧️' },
-  { id: 'winter', label: 'Winter', emoji: '❄️' },
-];
-
-const liveDeals = [
-  { tag: 'Flight', route: 'Delhi -> Goa', fare: 'Rs 4,299', note: '24% drop today' },
-  { tag: 'Train', route: 'Mumbai -> Udaipur', fare: 'Rs 1,180', note: 'Sleeper + meals' },
-  { tag: 'Stay', route: 'Jaipur Heritage Inn', fare: 'Rs 2,950/night', note: 'Free breakfast' },
-  { tag: 'Flight', route: 'Bengaluru -> Leh', fare: 'Rs 6,840', note: '2 seats left' },
-  { tag: 'Tour', route: 'Varanasi Ghat Walk', fare: 'Rs 799', note: 'Top rated guide' },
-  { tag: 'Stay', route: 'Kerala Houseboat', fare: 'Rs 5,400/night', note: 'Sunset package' },
-];
-
-function getSeasonThemeByMonth(monthIndex) {
-  if (monthIndex >= 2 && monthIndex <= 4) return 'spring';
-  if (monthIndex >= 5 && monthIndex <= 7) return 'monsoon';
-  if (monthIndex >= 10 || monthIndex <= 1) return 'winter';
-  return 'summer';
-}
-
-function buildPreviewItinerary({ destination, days, budget, vibe }) {
-  const safeDays = Math.max(1, Number(days) || 1);
-  const safeBudget = Math.max(5000, Number(budget) || 18000);
-  const perDay = Math.round(safeBudget / safeDays);
-  const pace = safeDays <= 2 ? 'Fast-paced' : safeDays <= 5 ? 'Balanced' : 'Leisure';
-
-  const vibeLibrary = {
-    culture: ['Old city walk', 'Local food trail', 'Museum or fort visit'],
-    adventure: ['Sunrise trek', 'Activity session', 'Sunset viewpoint'],
-    chill: ['Slow breakfast', 'Cafe hopping', 'Golden hour leisure'],
-    spiritual: ['Morning temple visit', 'Ritual or local ceremony', 'Silent evening reflection'],
-  };
-
-  const moments = vibeLibrary[vibe] || vibeLibrary.chill;
-  const dayPlan = Array.from({ length: safeDays }).map((_, idx) => ({
-    day: idx + 1,
-    morning: moments[0],
-    afternoon: moments[1],
-    evening: moments[2],
-  }));
-
-  return {
-    destination,
-    safeDays,
-    safeBudget,
-    perDay,
-    pace,
-    dayPlan,
-  };
-}
-
 export default function Home() {
   const [activeCategory, setActiveCategory] = useState(null);
-  const [seasonTheme, setSeasonTheme] = useState(() => getSeasonThemeByMonth(new Date().getMonth()));
-  const [previewInput, setPreviewInput] = useState({ destination: 'Jaipur', days: 4, budget: 22000, vibe: 'culture' });
-  const [previewPlan, setPreviewPlan] = useState(() => buildPreviewItinerary({ destination: 'Jaipur', days: 4, budget: 22000, vibe: 'culture' }));
   const [weatherData] = useState({ temp: 28, condition: 'Sunny', city: 'Delhi' });
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-season-theme', seasonTheme);
-  }, [seasonTheme]);
-
-  function handlePreviewSubmit(event) {
-    event.preventDefault();
-    setPreviewPlan(buildPreviewItinerary(previewInput));
-  }
 
   return (
     <div className="home-page">
-      <section className="deals-section section-container">
-        <div className="deals-top-row">
-          <div className="deals-title-wrap">
-            <span className="badge badge-cyan live-badge"><Zap size={12} /> Live Deals</span>
-            <h3><TrendingUp size={18} /> Real-time travel drops and flash offers</h3>
-          </div>
-          <div className="season-toggle" role="group" aria-label="Seasonal theme switcher">
-            {seasonThemes.map((season) => (
-              <button
-                key={season.id}
-                type="button"
-                className={`season-pill ${seasonTheme === season.id ? 'active' : ''}`}
-                onClick={() => setSeasonTheme(season.id)}
-              >
-                <span>{season.emoji}</span>
-                <span>{season.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="deals-marquee glass-card-sm" aria-label="Live travel deals ticker">
-          <div className="deals-track">
-            {[...liveDeals, ...liveDeals].map((deal, idx) => (
-              <div key={`${deal.route}-${idx}`} className="deal-chip">
-                <span className="deal-tag">{deal.tag}</span>
-                <span className="deal-route">{deal.route}</span>
-                <span className="deal-fare">{deal.fare}</span>
-                <span className="deal-note">{deal.note}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* ── HERO SECTION ── */}
       <section className="hero-section">
         <div className="hero-particles">
@@ -258,113 +158,6 @@ export default function Home() {
           <div className="stat-divider" />
           <StatItem end={100} label="AI Itineraries Daily" suffix="+" />
         </div>
-      </section>
-
-      <section className="preview-section section-container">
-        <motion.div
-          className="preview-grid"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-        >
-          <form className="preview-form glass-card" onSubmit={handlePreviewSubmit}>
-            <div className="preview-head">
-              <span className="badge">Quick Preview</span>
-              <h3>Build a sample itinerary in 10 seconds</h3>
-              <p>Try destination, trip length, and budget to see an instant travel blueprint.</p>
-            </div>
-
-            <div className="form-group">
-              <label>Destination</label>
-              <input
-                value={previewInput.destination}
-                onChange={(e) => setPreviewInput((prev) => ({ ...prev, destination: e.target.value }))}
-                placeholder="Example: Kochi"
-                required
-              />
-            </div>
-
-            <div className="preview-inline-fields">
-              <div className="form-group">
-                <label>Days</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="14"
-                  value={previewInput.days}
-                  onChange={(e) => setPreviewInput((prev) => ({ ...prev, days: Number(e.target.value) }))}
-                />
-              </div>
-              <div className="form-group">
-                <label>Budget (Rs)</label>
-                <input
-                  type="number"
-                  min="5000"
-                  step="500"
-                  value={previewInput.budget}
-                  onChange={(e) => setPreviewInput((prev) => ({ ...prev, budget: Number(e.target.value) }))}
-                />
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label>Travel Vibe</label>
-              <select
-                value={previewInput.vibe}
-                onChange={(e) => setPreviewInput((prev) => ({ ...prev, vibe: e.target.value }))}
-              >
-                <option value="culture">Culture</option>
-                <option value="adventure">Adventure</option>
-                <option value="chill">Chill</option>
-                <option value="spiritual">Spiritual</option>
-              </select>
-            </div>
-
-            <button className="button-primary w-full" type="submit">
-              <Sparkles size={16} /> Generate Sample Plan
-            </button>
-          </form>
-
-          <div className="preview-output glass-card">
-            <div className="preview-output-head">
-              <h3>{previewPlan.destination} Snapshot</h3>
-              <span className="badge badge-secondary">{previewPlan.pace}</span>
-            </div>
-
-            <div className="preview-kpis">
-              <div className="preview-kpi">
-                <span>Total Budget</span>
-                <strong>Rs {previewPlan.safeBudget.toLocaleString()}</strong>
-              </div>
-              <div className="preview-kpi">
-                <span>Per Day</span>
-                <strong>Rs {previewPlan.perDay.toLocaleString()}</strong>
-              </div>
-              <div className="preview-kpi">
-                <span>Trip Length</span>
-                <strong>{previewPlan.safeDays} days</strong>
-              </div>
-            </div>
-
-            <div className="preview-days">
-              {previewPlan.dayPlan.map((dayItem) => (
-                <div key={dayItem.day} className="preview-day-row">
-                  <div className="preview-day-title">Day {dayItem.day}</div>
-                  <div className="preview-day-flow">
-                    <span>{dayItem.morning}</span>
-                    <ArrowRight size={13} />
-                    <span>{dayItem.afternoon}</span>
-                    <ArrowRight size={13} />
-                    <span>{dayItem.evening}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <Link to="/planner" className="button-secondary w-full preview-open-btn">
-              <Calendar size={16} /> Open Full AI Planner
-            </Link>
-          </div>
-        </motion.div>
       </section>
 
       {/* ── FEATURES GRID ── */}

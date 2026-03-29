@@ -1,0 +1,112 @@
+.search-section {
+    text-align: center;
+    margin-bottom: 4rem;
+    padding: 3rem;
+}
+
+.route-form {
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+    justify-content: center;
+    margin-top: 2rem;
+}
+
+.input-field {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    padding: 0.8rem 1.2rem;
+    border-radius: 12px;
+    flex: 1;
+}
+
+.input-field input {
+    background: transparent;
+    border: none;
+    color: white;
+    font-size: 1.1rem;
+    outline: none;
+    width: 100%;
+}
+
+.divider-icon { color: var(--text-muted); opacity: 0.5; }
+
+.results-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.transport-card {
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.mode-badge {
+    position: absolute;
+    top: 1rem; right: 1rem;
+    background: var(--glass);
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--primary);
+}
+
+.card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 3rem;
+}
+
+.city-info h4 { font-size: 1.8rem; margin-bottom: 0.3rem; }
+.city-info p { color: var(--text-muted); font-size: 0.9rem; }
+
+.journey-info {
+    flex: 1;
+    margin: 0 4rem;
+    text-align: center;
+    position: relative;
+}
+
+.line {
+    height: 2px;
+    background: var(--text-muted);
+    width: 100%;
+    margin-bottom: 1rem;
+    position: relative;
+}
+
+.line::after {
+    content: '';
+    width: 10px; height: 10px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    position: absolute; right: -5px; top: -4px;
+}
+
+.journey-info p { font-size: 0.9rem; color: var(--text-muted); font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 0.5rem; }
+
+.card-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid var(--glass-border);
+    padding-top: 1.5rem;
+}
+
+.price-tag { font-size: 2rem; font-weight: 800; color: var(--accent); display: flex; align-items: center; gap: 0.5rem; }
+.btn-sm { padding: 0.6rem 2rem; font-size: 0.9rem; }
+
+.no-results { text-align: center; color: var(--text-muted); padding: 3rem; font-size: 1.1rem; }

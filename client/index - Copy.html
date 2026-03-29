@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <!-- SEO Meta Tags -->
+    <title>TravelIndia AI — Smart India Travel Hub</title>
+    <meta name="description" content="Plan your perfect India trip with AI-powered itineraries, real-time weather, budget optimization, and hidden gems discovery. Your complete India travel intelligence platform." />
+    <meta name="keywords" content="India travel, AI travel planner, India itinerary, budget travel India, hidden gems India, travel planning" />
+    <meta name="author" content="TravelIndia AI" />
+    
+    <!-- Open Graph -->
+    <meta property="og:title" content="TravelIndia AI — Smart India Travel Hub" />
+    <meta property="og:description" content="AI-powered travel planning for Incredible India. Get personalized itineraries in seconds." />
+    <meta property="og:type" content="website" />
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#6366f1" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇮🇳</text></svg>" />
+    
+    <!-- Preload fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  </head>
+  <body>
+    <!-- App Loading Screen -->
+    <div id="app-loader" style="
+      position: fixed; inset: 0;
+      background: #060a14;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 9999;
+      transition: opacity 0.5s ease;
+    ">
+      <div style="font-size: 4rem; margin-bottom: 1rem; animation: spin 2s linear infinite;">🇮🇳</div>
+      <div style="font-family: 'Outfit', sans-serif; font-size: 1.5rem; font-weight: 800; 
+        background: linear-gradient(135deg, #818cf8, #a855f7); -webkit-background-clip: text; 
+        -webkit-text-fill-color: transparent;">TravelIndia AI</div>
+      <div style="width: 200px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 2rem; overflow: hidden;">
+        <div id="load-bar" style="width: 0; height: 100%; border-radius: 2px;
+          background: linear-gradient(90deg, #6366f1, #a855f7);
+          animation: loadBar 1.5s ease-out forwards;"></div>
+      </div>
+      <style>
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes loadBar { from { width: 0; } to { width: 100%; } }
+      </style>
+    </div>
+    
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+    <script>
+      // Hide loader after app mounts
+      window.addEventListener('load', () => {
+        setTimeout(() => {
+          const loader = document.getElementById('app-loader');
+          if (loader) {
+            loader.style.opacity = '0';
+            setTimeout(() => loader.remove(), 500);
+          }
+        }, 1200);
+      });
+    </script>
+  </body>
+</html>

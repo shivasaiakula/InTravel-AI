@@ -1,0 +1,218 @@
+/* DASHBOARD PAGE */
+
+.login-prompt {
+  max-width: 500px;
+  margin: 6rem auto;
+  text-align: center;
+  padding: 4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.login-prompt h2 { font-size: 1.8rem; font-weight: 700; }
+.login-prompt p { color: var(--text-muted); }
+
+/* Header */
+.dashboard-header {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3rem;
+  align-items: center;
+  margin-bottom: 2.5rem;
+  padding: 2.5rem 3rem;
+  background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(168,85,247,0.06));
+  border-color: rgba(99,102,241,0.25);
+}
+
+.user-profile { display: flex; align-items: center; gap: 1.5rem; }
+
+.avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.2rem;
+  font-weight: 900;
+  color: white;
+  box-shadow: 0 0 30px rgba(99,102,241,0.3);
+  flex-shrink: 0;
+}
+
+.user-info h2 { font-size: 1.5rem; font-weight: 800; margin-bottom: 0.25rem; }
+.user-info p { color: var(--text-muted); font-size: 0.88rem; margin-bottom: 0.75rem; }
+.user-tags { display: flex; gap: 0.5rem; }
+
+/* Stats Row */
+.stats-row {
+  display: flex;
+  gap: 2.5rem;
+  justify-content: flex-end;
+}
+
+.stat-item {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.stat-icon { margin-bottom: 0.25rem; }
+.stat-item h3 { font-size: 1.4rem; font-weight: 800; }
+.stat-item p { font-size: 0.78rem; color: var(--text-muted); }
+
+/* Tabs */
+.dash-tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--glass-border);
+  margin-bottom: 2rem;
+}
+
+.dash-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s ease;
+  font-family: 'Outfit', sans-serif;
+}
+
+.dash-tab.active { color: var(--primary-light); border-bottom-color: var(--primary); }
+.dash-tab:hover:not(.active) { color: var(--text); }
+
+.dash-content {}
+
+/* Overview Grid */
+.overview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.recent-trips h3, .budget-chart h3, .quick-stats h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+/* Trip Row */
+.trip-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.trip-row:last-child { border-bottom: none; }
+
+.trip-row-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(99,102,241,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary-light);
+  flex-shrink: 0;
+}
+
+.trip-row-info { flex: 1; }
+.trip-dest { display: block; font-weight: 700; font-size: 0.9rem; }
+.trip-date { display: flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; color: var(--text-muted); }
+.trip-budget { font-weight: 700; font-size: 0.95rem; color: var(--primary-light); white-space: nowrap; }
+
+.mini-chart { height: 240px; position: relative; }
+.no-data { color: var(--text-muted); font-size: 0.9rem; padding: 2rem 0; text-align: center; }
+
+/* Quick insights */
+.insights-list { display: flex; flex-direction: column; gap: 0.75rem; }
+.insight-item { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid var(--glass-border); font-size: 0.88rem; }
+.insight-item:last-child { border-bottom: none; }
+.insight-item span { color: var(--text-muted); }
+.insight-item strong { font-weight: 700; }
+
+/* Trips Grid */
+.trips-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+
+.trip-card { padding: 1.75rem; display: flex; flex-direction: column; gap: 1rem; }
+
+.trip-card-header { display: flex; justify-content: space-between; align-items: flex-start; }
+.trip-dest-badge { display: flex; align-items: center; gap: 0.5rem; }
+.trip-dest-badge h4 { font-size: 1.15rem; font-weight: 700; }
+.trip-date-badge { display: flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; color: var(--text-muted); background: var(--glass); padding: 0.3rem 0.7rem; border-radius: 20px; }
+
+.trip-card-body { display: flex; flex-direction: column; gap: 0.5rem; }
+.trip-stat { display: flex; align-items: center; gap: 0.5rem; font-size: 0.88rem; color: var(--text-muted); }
+.trip-stat strong { color: var(--text); }
+
+.trip-actions { display: flex; gap: 0.75rem; margin-top: auto; }
+
+.no-trips {
+  grid-column: 1/-1;
+  text-align: center;
+  padding: 4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Analytics */
+.analytics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.chart-card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 1.25rem; }
+.chart-area-dash { height: 280px; position: relative; }
+
+.efficiency-card {}
+.efficiency-card h3 { font-size: 1.05rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
+
+.metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; }
+.metric-item { display: flex; flex-direction: column; gap: 0.5rem; }
+.metric-label { font-size: 0.88rem; color: var(--text-muted); font-weight: 600; }
+.metric-bar .progress-bar-container { height: 10px; }
+.metric-val { font-size: 0.95rem; font-weight: 800; }
+
+@media (max-width: 1200px) {
+  .overview-grid { grid-template-columns: 1fr 1fr; }
+  .trips-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 1024px) {
+  .dashboard-header { grid-template-columns: 1fr; gap: 1.5rem; }
+  .stats-row { justify-content: flex-start; }
+  .analytics-grid { grid-template-columns: 1fr; }
+  .metrics-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px) {
+  .overview-grid { grid-template-columns: 1fr; }
+  .trips-grid { grid-template-columns: 1fr; }
+  .stats-row { flex-wrap: wrap; }
+}
