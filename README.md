@@ -81,5 +81,24 @@ InTravel AI is a modern, AI-powered travel platform designed specifically for ex
 - **Live Weather**: Mock integration for Indian city weather.
 - **Google Maps**: One-click link to view locations on Google Maps.
 
+## 🚢 Deploy Using GitHub
+This repository now includes a GitHub Actions workflow at `.github/workflows/deploy-render.yml`.
+
+### 1. Create Render Deploy Hooks
+1. Open your Render dashboard.
+2. For `intravel-frontend`, create a Deploy Hook URL.
+3. For `intravel-backend`, create a Deploy Hook URL.
+
+### 2. Add GitHub Secrets
+In GitHub repository settings, add:
+- `RENDER_FRONTEND_DEPLOY_HOOK_URL`
+- `RENDER_BACKEND_DEPLOY_HOOK_URL`
+
+### 3. Deploy
+- Push to `main`, or
+- Run the workflow manually from Actions: `Deploy to Render`
+
+After this, each `main` push will trigger frontend and backend deploys on Render.
+
 ---
 Built with ❤️ for Indian Travelers.
