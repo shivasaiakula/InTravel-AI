@@ -25,10 +25,10 @@ const HOTEL_CITY_IMAGE_MAP = {
   Jaipur: 'https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?w=800&auto=format&fit=crop',
   Varanasi: 'https://images.unsplash.com/photo-1561361058-c24cecae35ca?w=800&auto=format&fit=crop',
   'Kerala (Alleppey)': 'https://images.unsplash.com/photo-1593693411515-c20261bcad6e?w=800&auto=format&fit=crop',
-  Ladakh: 'https://images.unsplash.com/photo-1581791538305-8ec692e0377b?w=800&auto=format&fit=crop',
+  Ladakh: DESTINATION_IMAGE_MAP.Ladakh,
   Agra: 'https://images.unsplash.com/photo-1564507592333-c60657eea523?w=800&auto=format&fit=crop',
-  Darjeeling: 'https://images.unsplash.com/photo-1442544213729-6a15f1611937?w=800&auto=format&fit=crop',
-  Mysore: 'https://images.unsplash.com/photo-1524492412937-b28074a5d7da?w=800&auto=format&fit=crop',
+  Darjeeling: DESTINATION_IMAGE_MAP.Darjeeling,
+  Mysore: DESTINATION_IMAGE_MAP.Mysore,
   'Andaman Islands': 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&auto=format&fit=crop',
 };
 
