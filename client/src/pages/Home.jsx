@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, useInView } from 'framer-motion';
 import {
@@ -73,21 +73,8 @@ const features = [
   { icon: <Sparkles />, label: 'AI Trip Planner', desc: 'Generate smart day-wise itineraries personalized to your travel style.', color: '#a855f7', link: '/planner' },
   { icon: <Calculator />, label: 'Smart Budget', desc: 'Track expenses, compare costs, and get AI budget optimization tips.', color: '#f43f5e', link: '/budget' },
   { icon: <Calendar />, label: 'Save Trips', desc: 'Create an account to save your favorite itineraries and manage journeys.', color: '#f59e0b', link: '/dashboard' },
-  { icon: <Star />, label: 'Travel Stories', desc: 'Share your journeys, upload photos, and inspire fellow travelers.', color: '#10b981', link: '/stories' },
+  { icon: <Star />, label: 'Travel Stories', desc: 'Share your journeys, upload photos, and inspire fellow travelers.', color: '#10b981', link: '/explore' },
   { icon: <Award />, label: 'Rewards', desc: 'Earn badges, unlock achievements, and level up your travel persona.', color: '#06b6d4', link: '/gamification' },
-];
-
-const visualThemes = [
-  { id: 'desert-sunrise', label: 'Desert', emoji: '🏜️', swatch: ['#f97316', '#facc15'] },
-  { id: 'himalayan-mist', label: 'Himalayan', emoji: '🏔️', swatch: ['#60a5fa', '#a78bfa'] },
-  { id: 'coastal-breeze', label: 'Coastal', emoji: '🌊', swatch: ['#06b6d4', '#22d3ee'] },
-  { id: 'temple-gold', label: 'Temple', emoji: '🛕', swatch: ['#f59e0b', '#fb7185'] },
-  { id: 'forest-monsoon', label: 'Forest', emoji: '🌿', swatch: ['#22c55e', '#38bdf8'] },
-  { id: 'festival-neon', label: 'Neon', emoji: '🎆', swatch: ['#ec4899', '#f59e0b'] },
-  { id: 'vintage-map', label: 'Vintage', emoji: '🗺️', swatch: ['#a16207', '#65a30d'] },
-  { id: 'midnight-luxe', label: 'Luxe', emoji: '🌌', swatch: ['#6366f1', '#14b8a6'] },
-  { id: 'candy-pop', label: 'Candy', emoji: '🍬', swatch: ['#f472b6', '#f59e0b'] },
-  { id: 'minimal-light', label: 'Minimal', emoji: '✨', swatch: ['#2563eb', '#64748b'] },
 ];
 
 const liveDeals = [
@@ -98,13 +85,6 @@ const liveDeals = [
   { tag: 'Tour', route: 'Varanasi Ghat Walk', fare: 'Rs 799', note: 'Top rated guide' },
   { tag: 'Stay', route: 'Kerala Houseboat', fare: 'Rs 5,400/night', note: 'Sunset package' },
 ];
-
-function getThemeByMonth(monthIndex) {
-  if (monthIndex >= 2 && monthIndex <= 4) return 'forest-monsoon';
-  if (monthIndex >= 5 && monthIndex <= 7) return 'coastal-breeze';
-  if (monthIndex >= 10 || monthIndex <= 1) return 'midnight-luxe';
-  return 'desert-sunrise';
-}
 
 function buildPreviewItinerary({ destination, days, budget, vibe }) {
   const safeDays = Math.max(1, Number(days) || 1);
@@ -139,23 +119,18 @@ function buildPreviewItinerary({ destination, days, budget, vibe }) {
 
 export default function Home() {
   const [activeCategory, setActiveCategory] = useState(null);
-  const [seasonTheme, setSeasonTheme] = useState(() => {
-    const storedTheme = localStorage.getItem('intravel-theme');
-    if (storedTheme) return storedTheme;
-    return getThemeByMonth(new Date().getMonth());
-  });
   const [previewInput, setPreviewInput] = useState({ destination: 'Jaipur', days: 4, budget: 22000, vibe: 'culture' });
   const [previewPlan, setPreviewPlan] = useState(() => buildPreviewItinerary({ destination: 'Jaipur', days: 4, budget: 22000, vibe: 'culture' }));
   const [weatherData] = useState({ temp: 28, condition: 'Sunny', city: 'Delhi' });
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-season-theme', seasonTheme);
-    localStorage.setItem('intravel-theme', seasonTheme);
-  }, [seasonTheme]);
-
-  function resetThemeToAuto() {
-    setSeasonTheme(getThemeByMonth(new Date().getMonth()));
-  }
+  const heroParticles = useMemo(() => {
+    return Array.from({ length: 8 }).map((_, index) => ({
+      id: index,
+      left: `${Math.random() * 100}%`,
+      top: `${Math.random() * 100}%`,
+      delay: `${Math.random() * 3.2}s`,
+      duration: `${Math.random() * 3.2 + 4.2}s`,
+    }));
+  }, []);
 
   function handlePreviewSubmit(event) {
     event.preventDefault();
@@ -170,31 +145,16 @@ export default function Home() {
             <span className="badge badge-cyan live-badge"><Zap size={12} /> Live Deals</span>
             <h3><TrendingUp size={18} /> Real-time travel drops and flash offers</h3>
           </div>
-          <div className="season-toggle" role="group" aria-label="Seasonal theme switcher">
-            <button
-              type="button"
-              className="season-pill season-auto"
-              onClick={resetThemeToAuto}
-              title="Use automatic monthly theme"
-            >
-              <span>Auto</span>
-            </button>
-            {visualThemes.map((season) => (
-              <button
-                key={season.id}
-                type="button"
-                className={`season-pill ${seasonTheme === season.id ? 'active' : ''}`}
-                onClick={() => setSeasonTheme(season.id)}
-              >
-                <span
-                  className="season-swatch"
-                  style={{ '--sw-a': season.swatch[0], '--sw-b': season.swatch[1] }}
-                  aria-hidden="true"
-                />
-                <span>{season.emoji}</span>
-                <span>{season.label}</span>
-              </button>
-            ))}
+          <div className="home-utility-strip glass-card-sm">
+            <span>Use Ctrl/Cmd + K for instant navigation</span>
+            <div className="home-utility-actions">
+              <Link to="/planner" className="button-primary">
+                <Sparkles size={14} /> Plan Now
+              </Link>
+              <Link to="/explore" className="button-secondary">
+                <Compass size={14} /> Explore Cities
+              </Link>
+            </div>
           </div>
         </div>
 
@@ -215,12 +175,12 @@ export default function Home() {
       {/* ── HERO SECTION ── */}
       <section className="hero-section">
         <div className="hero-particles">
-          {Array.from({ length: 20 }).map((_, i) => (
-            <div key={i} className="particle" style={{
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              animationDelay: `${Math.random() * 5}s`,
-              animationDuration: `${Math.random() * 5 + 3}s`,
+          {heroParticles.map((particle) => (
+            <div key={particle.id} className="particle" style={{
+              left: particle.left,
+              top: particle.top,
+              animationDelay: particle.delay,
+              animationDuration: particle.duration,
             }} />
           ))}
         </div>
@@ -235,12 +195,12 @@ export default function Home() {
             <Sparkles size={14} /> AI-Powered Travel Intelligence
           </div>
           <h1 className="hero-title">
-            Discover the Magic of<br />
+            Plan Better Trips Across<br />
             <span className="heading-gradient text-glow">Incredible India</span>
           </h1>
           <p className="hero-subtitle">
-            Plan your perfect getaway with AI-powered itineraries, real-time insights,
-            smart budget tools, and hidden gems exploration.
+            Build your route, budget, and day plan in one clean flow with AI suggestions
+            and practical travel tools.
           </p>
           <div className="hero-actions">
             <Link to="/explore" className="button-primary hero-btn">
@@ -261,11 +221,6 @@ export default function Home() {
             animate={{ y: [0, -12, 0] }} transition={{ duration: 3, repeat: Infinity }}>
             <Plane size={20} color="#6366f1" />
             <div><div className="fc-title">Flights Found</div><div className="fc-val">2,847</div></div>
-          </motion.div>
-          <motion.div className="float-card glass-card-sm" style={{ bottom: '30%', right: '5%' }}
-            animate={{ y: [0, 10, 0] }} transition={{ duration: 4, repeat: Infinity, delay: 1 }}>
-            <Star size={20} color="#f59e0b" />
-            <div><div className="fc-title">Avg Rating</div><div className="fc-val">4.9 ⭐</div></div>
           </motion.div>
           <motion.div className="float-card glass-card-sm" style={{ top: '40%', left: '3%' }}
             animate={{ y: [0, -8, 0] }} transition={{ duration: 3.5, repeat: Infinity, delay: 0.5 }}>

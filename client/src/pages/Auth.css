@@ -51,6 +51,32 @@
     border-color: var(--primary);
 }
 
+.password-field {
+    position: relative;
+}
+
+.password-field input {
+    padding-right: 2.7rem;
+}
+
+.password-toggle {
+    position: absolute;
+    top: 50%;
+    right: 0.7rem;
+    transform: translateY(-50%);
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.2rem;
+}
+
+.password-toggle:hover {
+    color: var(--text);
+}
+
 .w-full {
     width: 100%;
 }

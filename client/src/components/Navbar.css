@@ -43,6 +43,103 @@
   gap: 0.3rem;
 }
 
+.command-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.45rem 0.6rem;
+  transition: all 0.2s ease;
+}
+
+.command-trigger:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.command-shortcut {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  padding: 0.1rem 0.3rem;
+}
+
+.theme-badge {
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.45rem 0.7rem;
+}
+
+.theme-menu-wrap {
+  position: relative;
+  margin-right: 0.45rem;
+}
+
+.theme-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.theme-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.theme-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  min-width: 140px;
+  padding: 0.35rem;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: rgba(7, 12, 26, 0.95);
+  backdrop-filter: blur(16px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  z-index: 1200;
+}
+
+.theme-option {
+  border: none;
+  background: transparent;
+  text-align: left;
+  color: var(--text-muted);
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.theme-option:hover {
+  background: var(--glass);
+  color: var(--text);
+}
+
 .nav-links {
   display: flex;
   align-items: center;
@@ -167,14 +264,26 @@
   text-decoration: none;
 }
 
-.mobile-link:hover, .mobile-link.active {
+.mobile-link:hover,
+.mobile-link.active {
   color: var(--text);
   background: var(--glass);
 }
 
 @media (max-width: 1024px) {
-  .hamburger { display: flex; }
-  .desktop-nav { display: none; }
-  .mobile-menu { display: flex; }
-  .navbar { padding: 0 1.5rem; }
+  .hamburger {
+    display: flex;
+  }
+
+  .desktop-nav {
+    display: none;
+  }
+
+  .mobile-menu {
+    display: flex;
+  }
+
+  .navbar {
+    padding: 0 1.5rem;
+  }
 }

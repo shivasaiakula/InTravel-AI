@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Compass, Map, User, LogOut, BarChart3, Menu, X, Sparkles, TrendingUp, Package, Trophy } from 'lucide-react';
+import { Compass, Map, User, LogOut, BarChart3, Menu, X, Sparkles, Package, Trophy, Search } from 'lucide-react';
 import './Navbar.css';
 
-function Navbar() {
+function Navbar({ onOpenCommandPalette }) {
   const user = JSON.parse(localStorage.getItem('user'));
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -41,6 +41,16 @@ function Navbar() {
       </Link>
 
       <div className="nav-links desktop-nav">
+        <button type="button" className="command-trigger" onClick={() => onOpenCommandPalette?.()}>
+          <Search size={15} />
+          <span>Quick Search</span>
+          <span className="command-shortcut">Ctrl+K</span>
+        </button>
+
+        <div className="theme-badge" aria-label="Simple theme enabled">
+          Simple Theme
+        </div>
+
         {navLinks.map(link => (
           <Link
             key={link.to}
@@ -90,6 +100,9 @@ function Navbar() {
                 {link.icon} {link.label}
               </Link>
             ))}
+            <button type="button" className="mobile-link" onClick={() => { setMobileOpen(false); onOpenCommandPalette?.(); }}>
+              <Search size={16} /> Quick Search (Ctrl+K)
+            </button>
             {user ? (
               <>
                 <Link to="/dashboard" className="mobile-link" onClick={() => setMobileOpen(false)}>
