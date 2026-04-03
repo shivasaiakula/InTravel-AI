@@ -3,11 +3,35 @@ const router = express.Router();
 const db = require('./db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
 
 // ── AI Setup (Gemini) ──
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "YOUR_GEMINI_KEY");
+const GEMINI_MODELS = (process.env.GEMINI_MODELS || process.env.GEMINI_MODEL || 'gemini-2.0-flash,gemini-1.5-flash')
+    .split(',')
+    .map(m => m.trim())
+    .filter(Boolean);
+
+async function generateGeminiText(prompt) {
+    let lastError;
+    for (const modelName of GEMINI_MODELS) {
+        try {
+            const model = genAI.getGenerativeModel({ model: modelName });
+            const result = await model.generateContent(prompt);
+            const text = result?.response?.text?.();
+            if (text) return text;
+        } catch (error) {
+            lastError = error;
+            const status = Number(error?.status);
+            // Retry on model-not-found and similar compatibility errors.
+            if (status === 404 || status === 400) continue;
+            throw error;
+        }
+    }
+    throw lastError || new Error('No Gemini models available');
+}
 
 // ── Simple In-Memory Cache ──
 const cache = new Map();
@@ -17,6 +41,67 @@ function setCache(key, data) { cache.set(key, { data, ts: Date.now() }); }
 // Local auth fallback to keep login/register working when DB is not configured.
 const localUsersByEmail = new Map();
 const resetOtpStore = new Map();
+const localBudgetProfiles = new Map();
+let localReviews = [];
+let budgetProfilesTableReady = false;
+const authRateStore = new Map();
+
+const MIN_PASSWORD_LENGTH = 8;
+const OTP_EXPIRY_MS = 10 * 60 * 1000;
+const OTP_VERIFY_MAX_ATTEMPTS = 5;
+const REQUEST_RESET_LIMIT = { max: 5, windowMs: 15 * 60 * 1000 };
+const LOGIN_LIMIT = { max: 10, windowMs: 15 * 60 * 1000 };
+let otpTransporter;
+
+function budgetProfileKey(userId, destination) {
+    return `${String(userId || 'guest')}:${String(destination || 'default').trim().toLowerCase()}`;
+}
+
+function buildSanitizedProfile(payload) {
+    const categories = Array.isArray(payload?.categories)
+        ? payload.categories.map((cat, index) => ({
+            id: cat.id || Date.now() + index,
+            name: String(cat.name || `Category ${index + 1}`),
+            icon: String(cat.icon || '💰'),
+            budget: Math.max(0, Number(cat.budget) || 0),
+            actual: Math.max(0, Number(cat.actual) || 0),
+            color: String(cat.color || 'rgba(99, 102, 241, 0.8)'),
+        }))
+        : [];
+
+    return {
+        userId: Number(payload?.userId) || 0,
+        destination: String(payload?.destination || 'Unknown').slice(0, 100),
+        mode: ['budget-first', 'balanced', 'comfort-first'].includes(payload?.mode)
+            ? payload.mode
+            : 'balanced',
+        days: Math.max(1, Math.min(30, Number(payload?.days) || 1)),
+        totalBudget: Math.max(1000, Number(payload?.totalBudget) || 1000),
+        categories,
+        recommendations: Array.isArray(payload?.recommendations) ? payload.recommendations : [],
+        metrics: typeof payload?.metrics === 'object' && payload?.metrics !== null ? payload.metrics : {},
+        updatedAt: new Date().toISOString(),
+    };
+}
+
+async function ensureBudgetProfilesTable() {
+    if (budgetProfilesTableReady) return;
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS budget_optimizer_profiles (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            destination_name VARCHAR(100) NOT NULL,
+            mode VARCHAR(30) DEFAULT 'balanced',
+            days INT DEFAULT 1,
+            total_budget DECIMAL(12, 2) DEFAULT 0,
+            payload_json JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_user_destination (user_id, destination_name)
+        )
+    `);
+    budgetProfilesTableReady = true;
+}
 
 function isDatabaseUnavailable(error) {
     const msg = String(error?.message || '').toLowerCase();
@@ -30,6 +115,80 @@ function isDatabaseUnavailable(error) {
 
 function generateOtp() {
     return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function normalizeEmail(email) {
+    return String(email || '').trim().toLowerCase();
+}
+
+function isStrongPassword(password) {
+    const value = String(password || '');
+    return value.length >= MIN_PASSWORD_LENGTH && /[A-Za-z]/.test(value) && /\d/.test(value);
+}
+
+function extractClientIp(req) {
+    const xff = req.headers['x-forwarded-for'];
+    if (Array.isArray(xff) && xff.length > 0) return String(xff[0]).trim();
+    if (typeof xff === 'string' && xff.length > 0) return xff.split(',')[0].trim();
+    return String(req.ip || req.socket?.remoteAddress || 'unknown');
+}
+
+function consumeRateLimit(key, config) {
+    const now = Date.now();
+    const entry = authRateStore.get(key);
+    if (!entry || now > entry.resetAt) {
+        authRateStore.set(key, { count: 1, resetAt: now + config.windowMs });
+        return { limited: false, remaining: config.max - 1 };
+    }
+
+    if (entry.count >= config.max) {
+        return { limited: true, retryAfterMs: Math.max(0, entry.resetAt - now), remaining: 0 };
+    }
+
+    entry.count += 1;
+    authRateStore.set(key, entry);
+    return { limited: false, remaining: Math.max(0, config.max - entry.count) };
+}
+
+function getOtpTransporter() {
+    if (otpTransporter !== undefined) return otpTransporter;
+
+    const host = process.env.SMTP_HOST;
+    const port = Number(process.env.SMTP_PORT || 587);
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+
+    if (!host || !user || !pass) {
+        otpTransporter = null;
+        return otpTransporter;
+    }
+
+    otpTransporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+    });
+
+    return otpTransporter;
+}
+
+async function sendResetOtpEmail(email, otp) {
+    const transporter = getOtpTransporter();
+    if (!transporter) return false;
+
+    const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+    const appName = process.env.APP_NAME || 'InTravel AI';
+
+    await transporter.sendMail({
+        from,
+        to: email,
+        subject: `${appName} password reset OTP`,
+        text: `Your OTP is ${otp}. It expires in 10 minutes. If you did not request this, ignore this email.`,
+        html: `<p>Your OTP is <strong>${otp}</strong>.</p><p>It expires in 10 minutes.</p><p>If you did not request this, ignore this email.</p>`,
+    });
+
+    return true;
 }
 
 async function findUserByEmail(email) {
@@ -49,7 +208,18 @@ async function findUserByEmail(email) {
 // ── AUTH ROUTES ──
 router.post('/register', async (req, res) => {
     try {
-        const { username, email, password } = req.body;
+        const { username, password } = req.body;
+        const email = normalizeEmail(req.body?.email);
+        const normalizedUsername = String(username || '').trim();
+
+        if (!normalizedUsername || !email || !password) {
+            return res.status(400).json({ error: 'Username, email, and password are required' });
+        }
+        if (!isStrongPassword(password)) {
+            return res.status(400).json({
+                error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters and include letters and numbers`,
+            });
+        }
 
         // Check if user already exists
         const [existing] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
@@ -58,13 +228,21 @@ router.post('/register', async (req, res) => {
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        await db.execute('INSERT INTO users (username, email, password) VALUES (?, ?, ?)', [username, email, hashedPassword]);
+        await db.execute('INSERT INTO users (username, email, password) VALUES (?, ?, ?)', [normalizedUsername, email, hashedPassword]);
         res.status(201).json({ message: 'User registered successfully!' });
     } catch (error) {
         if (isDatabaseUnavailable(error)) {
-            const { username, email, password } = req.body;
-            if (!username || !email || !password) {
+            const { username, password } = req.body;
+            const email = normalizeEmail(req.body?.email);
+            const normalizedUsername = String(username || '').trim();
+
+            if (!normalizedUsername || !email || !password) {
                 return res.status(400).json({ error: 'Username, email, and password are required' });
+            }
+            if (!isStrongPassword(password)) {
+                return res.status(400).json({
+                    error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters and include letters and numbers`,
+                });
             }
 
             if (localUsersByEmail.has(email)) {
@@ -74,7 +252,7 @@ router.post('/register', async (req, res) => {
             const hashedPassword = await bcrypt.hash(password, 10);
             localUsersByEmail.set(email, {
                 id: Date.now(),
-                username,
+                username: normalizedUsername,
                 email,
                 password: hashedPassword,
             });
@@ -86,7 +264,19 @@ router.post('/register', async (req, res) => {
 
 router.post('/login', async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const email = normalizeEmail(req.body?.email);
+        const { password } = req.body;
+        const loginRateKey = `login:${extractClientIp(req)}:${email}`;
+        const loginRate = consumeRateLimit(loginRateKey, LOGIN_LIMIT);
+
+        if (loginRate.limited) {
+            return res.status(429).json({ error: 'Too many login attempts. Please try again later.' });
+        }
+
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email and password are required' });
+        }
+
         const [users] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
         if (users.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
 
@@ -97,7 +287,8 @@ router.post('/login', async (req, res) => {
         res.json({ token, user: { id: users[0].id, username: users[0].username } });
     } catch (error) {
         if (isDatabaseUnavailable(error)) {
-            const { email, password } = req.body;
+            const email = normalizeEmail(req.body?.email);
+            const { password } = req.body;
             const user = localUsersByEmail.get(email);
             if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
@@ -113,17 +304,50 @@ router.post('/login', async (req, res) => {
 
 router.post('/auth/request-reset', async (req, res) => {
     try {
-        const { email } = req.body;
+        const email = normalizeEmail(req.body?.email);
         if (!email) return res.status(400).json({ error: 'Email is required' });
 
+        const resetRateKey = `request-reset:${extractClientIp(req)}:${email}`;
+        const resetRate = consumeRateLimit(resetRateKey, REQUEST_RESET_LIMIT);
+        if (resetRate.limited) {
+            return res.status(429).json({ error: 'Too many reset requests. Please try again later.' });
+        }
+
         const { user } = await findUserByEmail(email);
-        if (!user) return res.status(404).json({ error: 'Account not found for this email' });
+        // Return generic response to avoid leaking account existence.
+        if (!user) {
+            return res.json({ message: 'If an account exists for this email, an OTP has been generated.' });
+        }
 
         const otp = generateOtp();
-        resetOtpStore.set(email, { otp, expiresAt: Date.now() + 10 * 60 * 1000 });
+        const otpHash = await bcrypt.hash(otp, 10);
+        resetOtpStore.set(email, {
+            otpHash,
+            attempts: 0,
+            expiresAt: Date.now() + OTP_EXPIRY_MS,
+        });
 
-        // OTP email provider can be plugged in here. For now return OTP in dev mode.
-        return res.json({ message: 'OTP generated. It expires in 10 minutes.', debugOtp: otp });
+        const response = {
+            message: 'If an account exists for this email, an OTP has been generated.',
+        };
+
+        try {
+            const emailSent = await sendResetOtpEmail(email, otp);
+            if (!emailSent && process.env.NODE_ENV !== 'production') {
+                response.devNote = 'SMTP not configured. Using debug OTP response.';
+            }
+        } catch {
+            if (process.env.NODE_ENV !== 'production') {
+                response.devNote = 'SMTP delivery failed. Using debug OTP response.';
+            }
+        }
+
+        // OTP email provider can be plugged in here. Only expose OTP in non-production mode.
+        if (process.env.NODE_ENV !== 'production') {
+            response.debugOtp = otp;
+        }
+
+        return res.json(response);
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
@@ -131,9 +355,15 @@ router.post('/auth/request-reset', async (req, res) => {
 
 router.post('/auth/verify-reset', async (req, res) => {
     try {
-        const { email, otp, newPassword } = req.body;
+        const email = normalizeEmail(req.body?.email);
+        const { otp, newPassword } = req.body;
         if (!email || !otp || !newPassword) {
             return res.status(400).json({ error: 'Email, otp, and newPassword are required' });
+        }
+        if (!isStrongPassword(newPassword)) {
+            return res.status(400).json({
+                error: `New password must be at least ${MIN_PASSWORD_LENGTH} characters and include letters and numbers`,
+            });
         }
 
         const otpEntry = resetOtpStore.get(email);
@@ -142,7 +372,16 @@ router.post('/auth/verify-reset', async (req, res) => {
             resetOtpStore.delete(email);
             return res.status(400).json({ error: 'OTP expired. Request a new one.' });
         }
-        if (String(otpEntry.otp) !== String(otp)) {
+
+        if (otpEntry.attempts >= OTP_VERIFY_MAX_ATTEMPTS) {
+            resetOtpStore.delete(email);
+            return res.status(429).json({ error: 'Too many invalid attempts. Request a new OTP.' });
+        }
+
+        const validOtp = await bcrypt.compare(String(otp), otpEntry.otpHash);
+        if (!validOtp) {
+            otpEntry.attempts += 1;
+            resetOtpStore.set(email, otpEntry);
             return res.status(400).json({ error: 'Invalid OTP' });
         }
 
@@ -199,24 +438,124 @@ router.get('/hotels', async (req, res) => {
     } catch (err) { res.json(mockHotels.filter(h => h.city === city)); }
 });
 
-// ── AI TRIP PLANNER (ENHANCED) ──
-router.post('/ai/plan', async (req, res) => {
-    const { destination, days, budget, purpose, budgetTier, styles, travelers } = req.body;
-    const requestedDays = Math.min(30, Math.max(1, Number(days) || 1));
+// ── NEARBY PLACE HELPERS (WITH API FALLBACK) ──
+const TIME_WINDOWS = ['7:00 AM - 9:00 AM', '9:30 AM - 12:00 PM', '1:00 PM - 3:30 PM', '4:00 PM - 6:30 PM', '7:00 PM - 9:00 PM'];
+const CURATED_NEARBY = {
+    goa: ['Fontainhas Latin Quarter', 'Dona Paula Viewpoint', 'Anjuna Flea Market', 'Reis Magos Fort', 'Chapora Fort', 'Basilica of Bom Jesus', 'Candolim Beach Walk'],
+    manali: ['Hadimba Temple', 'Old Manali Cafes', 'Jogini Waterfall Trail', 'Vashisht Hot Springs', 'Solang Valley Viewpoint', 'Naggar Castle', 'Mall Road Local Market'],
+    jaipur: ['Hawa Mahal', 'Jantar Mantar', 'Panna Meena ka Kund', 'Nahargarh Sunset Point', 'Albert Hall Museum', 'Johari Bazaar', 'Patrika Gate'],
+    mumbai: ['Gateway of India', 'Kala Ghoda Art District', 'Marine Drive', 'Bandra Bandstand', 'Colaba Causeway', 'Sanjay Gandhi NP', 'Bhau Daji Lad Museum'],
+    delhi: ['Humayun Tomb', 'Lodhi Garden', 'Chandni Chowk Food Lane', 'Agrasen ki Baoli', 'Dilli Haat', 'Safdarjung Tomb', 'India Gate Evening Loop'],
+    bengaluru: ['Lalbagh Garden', 'Cubbon Park', 'Church Street Walk', 'VV Puram Food Street', 'Nandi Hills Sunrise Point', 'Bangalore Palace', 'Malleswaram Market'],
+};
 
-    const cacheKey = `plan:${destination}:${days}:${budget}:${purpose}`;
-    const cached = getCached(cacheKey);
-    if (cached) return res.json({ itinerary: cached, cached: true });
+function getNearbyPool(destination) {
+    const key = String(destination || '').trim().toLowerCase();
+    if (CURATED_NEARBY[key]) return CURATED_NEARBY[key];
+    return [
+        `${destination} Heritage Quarter`,
+        `${destination} Local Market Street`,
+        `${destination} Signature Food Lane`,
+        `${destination} Sunset Viewpoint`,
+        `${destination} Art & Culture Hub`,
+        `${destination} Riverside Walk`,
+        `${destination} Old Town Corners`,
+    ];
+}
+
+function estimateTravelMinutes(fromName, toName, dayNo, index) {
+    const fingerprint = `${fromName}|${toName}|${dayNo}|${index}`.length;
+    return 12 + (fingerprint % 28);
+}
+
+async function fetchTravelMinutesViaApi(fromName, toName) {
+    const endpoint = process.env.TRAVEL_TIME_API_URL;
+    if (!endpoint) {
+        throw new Error('Travel time API not configured');
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1200);
 
     try {
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const url = `${endpoint}?from=${encodeURIComponent(fromName)}&to=${encodeURIComponent(toName)}`;
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) throw new Error(`Travel API failed with ${response.status}`);
+        const data = await response.json();
+        const minutes = Number(data?.minutes);
+        if (!Number.isFinite(minutes) || minutes <= 0) throw new Error('Travel API returned invalid minutes');
+        return Math.round(minutes);
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
 
+async function buildNearbyPlan(destination, requestedDays) {
+    const pool = getNearbyPool(destination);
+    const days = [];
+    let usedApi = false;
+
+    for (let dayNo = 1; dayNo <= requestedDays; dayNo += 1) {
+        const stopCount = 3 + (dayNo % 3); // 3 to 5 stops/day
+        const start = (dayNo * 2) % pool.length;
+        const places = [];
+
+        for (let i = 0; i < stopCount; i += 1) {
+            const placeName = pool[(start + i) % pool.length];
+            places.push({
+                name: placeName,
+                bestVisitWindow: TIME_WINDOWS[(dayNo + i) % TIME_WINDOWS.length],
+                travelFromPrevious: i === 0 ? 'Start point' : '',
+                travelSource: i === 0 ? 'n/a' : '',
+            });
+        }
+
+        for (let i = 1; i < places.length; i += 1) {
+            const fromName = places[i - 1].name;
+            const toName = places[i].name;
+            try {
+                const minutes = await fetchTravelMinutesViaApi(fromName, toName);
+                places[i].travelFromPrevious = `${minutes} mins`;
+                places[i].travelSource = 'api';
+                usedApi = true;
+            } catch {
+                const fallbackMinutes = estimateTravelMinutes(fromName, toName, dayNo, i);
+                places[i].travelFromPrevious = `${fallbackMinutes} mins (est.)`;
+                places[i].travelSource = 'fallback';
+            }
+        }
+
+        days.push({ day: dayNo, places });
+    }
+
+    return {
+        source: usedApi ? 'mixed' : 'fallback',
+        days,
+    };
+}
+
+// ── AI TRIP PLANNER (ENHANCED) ──
+router.post('/ai/plan', async (req, res) => {
+    const { destination, days, duration, budget, purpose, budgetTier, styles, travelers } = req.body;
+    const requestedDays = Math.min(30, Math.max(1, Number(days ?? duration) || 1));
+
+    const cacheKey = `plan:${destination}:${requestedDays}:${budget}:${purpose}`;
+    const cached = getCached(cacheKey);
+    if (cached) {
+        if (typeof cached === 'string') {
+            const nearbyPlan = await buildNearbyPlan(destination, requestedDays);
+            return res.json({ itinerary: cached, nearbyPlan, cached: true });
+        }
+        return res.json({ ...cached, cached: true });
+    }
+
+    try {
         const purposeContext = purpose ? `This is a ${purpose} trip.` : '';
         const styleContext = styles?.length > 0 ? `Travel preferences: ${styles.join(', ')}.` : '';
         const travelersCtx = travelers ? `Traveling with ${travelers} person(s).` : '';
         const tierCtx = budgetTier ? `Budget category: ${budgetTier}.` : '';
 
-        const prompt = `Create a detailed ${days}-day travel itinerary for ${destination}, India.
+        const prompt = `Create a detailed ${requestedDays}-day travel itinerary for ${destination}, India.
         
 Budget: ₹${budget} total. ${tierCtx}
 ${purposeContext} ${travelersCtx} ${styleContext}
@@ -238,16 +577,17 @@ Include:
 
 Be specific, practical and engaging. Use emojis for visual clarity.`;
 
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
+        const text = await generateGeminiText(prompt);
         const normalized = ensureItineraryHasAllDays(text, requestedDays, destination, budget);
-        setCache(cacheKey, normalized);
-        res.json({ itinerary: normalized });
+        const nearbyPlan = await buildNearbyPlan(destination, requestedDays);
+        setCache(cacheKey, { itinerary: normalized, nearbyPlan });
+        res.json({ itinerary: normalized, nearbyPlan });
     } catch (error) {
         console.error("AI Generation Error:", error);
         // Smart fallback with personalized mock
         const fallback = generateFallbackItinerary(destination, requestedDays, budget, purpose);
-        res.json({ itinerary: fallback, ai_fallback: true });
+        const nearbyPlan = await buildNearbyPlan(destination, requestedDays);
+        res.json({ itinerary: fallback, nearbyPlan, ai_fallback: true });
     }
 });
 
@@ -255,15 +595,14 @@ Be specific, practical and engaging. Use emojis for visual clarity.`;
 router.post('/ai/chat', async (req, res) => {
     const { message } = req.body;
     try {
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         const prompt = `You are TravelBot — an expert Indian travel assistant with encyclopedic knowledge of India's 50 states, hidden gems, festivals, cuisine, transport, and budget tips.
 
 User Query: "${message}"
 
 Respond in 2-4 sentences. Be friendly, specific, and add one actionable tip. Use an occasional emoji. Always mention specific places, costs in ₹, or exact timing when relevant.`;
 
-        const result = await model.generateContent(prompt);
-        res.json({ reply: result.response.text() });
+        const reply = await generateGeminiText(prompt);
+        res.json({ reply });
     } catch (error) {
         // Category-aware fallbacks
         const msg = message.toLowerCase();
@@ -349,6 +688,78 @@ router.delete('/trips/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+router.get('/budget/optimizer/:userId', async (req, res) => {
+    const userId = Number(req.params.userId) || 0;
+    const destination = String(req.query.destination || 'Unknown').slice(0, 100);
+    const fallbackKey = budgetProfileKey(userId, destination);
+
+    try {
+        await ensureBudgetProfilesTable();
+        const [rows] = await db.execute(
+            'SELECT payload_json FROM budget_optimizer_profiles WHERE user_id = ? AND destination_name = ? LIMIT 1',
+            [userId, destination]
+        );
+
+        if (rows.length === 0) {
+            return res.json({ profile: localBudgetProfiles.get(fallbackKey) || null });
+        }
+
+        return res.json({ profile: rows[0].payload_json || null });
+    } catch (error) {
+        if (!isDatabaseUnavailable(error)) {
+            const msg = String(error?.message || '').toLowerCase();
+            if (!msg.includes('budget_optimizer_profiles')) {
+                return res.status(500).json({ error: error.message });
+            }
+        }
+
+        return res.json({ profile: localBudgetProfiles.get(fallbackKey) || null, source: 'local' });
+    }
+});
+
+router.post('/budget/optimizer', async (req, res) => {
+    const sanitized = buildSanitizedProfile(req.body || {});
+    const fallbackKey = budgetProfileKey(sanitized.userId, sanitized.destination);
+
+    if (!sanitized.userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    try {
+        await ensureBudgetProfilesTable();
+        await db.execute(
+            `INSERT INTO budget_optimizer_profiles (user_id, destination_name, mode, days, total_budget, payload_json)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+             mode = VALUES(mode),
+             days = VALUES(days),
+             total_budget = VALUES(total_budget),
+             payload_json = VALUES(payload_json),
+             updated_at = CURRENT_TIMESTAMP`,
+            [
+                sanitized.userId,
+                sanitized.destination,
+                sanitized.mode,
+                sanitized.days,
+                sanitized.totalBudget,
+                JSON.stringify(sanitized),
+            ]
+        );
+
+        return res.json({ message: 'Budget optimizer profile saved', profile: sanitized });
+    } catch (error) {
+        if (!isDatabaseUnavailable(error)) {
+            const msg = String(error?.message || '').toLowerCase();
+            if (!msg.includes('budget_optimizer_profiles')) {
+                return res.status(500).json({ error: error.message });
+            }
+        }
+
+        localBudgetProfiles.set(fallbackKey, sanitized);
+        return res.json({ message: 'Budget optimizer profile saved (local mode)', profile: sanitized, source: 'local' });
+    }
+});
+
 // ── NEARBY SUGGESTIONS (MOCK) ──
 router.get('/nearby', async (req, res) => {
     const { city } = req.query;
@@ -369,6 +780,9 @@ router.get('/nearby', async (req, res) => {
 
 // ── COMMUNITY REVIEWS ──
 router.get('/reviews/:city', async (req, res) => {
+    const city = String(req.params.city || '').trim();
+    if (!city) return res.status(400).json({ error: 'city is required' });
+
     try {
         const [rows] = await db.execute(`
             SELECT r.*, u.username as user_name 
@@ -376,35 +790,69 @@ router.get('/reviews/:city', async (req, res) => {
             LEFT JOIN users u ON r.user_id = u.id 
             WHERE r.destination_name = ? 
             ORDER BY r.created_at DESC
-        `, [req.params.city]);
-        res.json(rows.length > 0 ? rows : mockReviews.filter(r => r.city === req.params.city));
+        `, [city]);
+        res.json(rows.length > 0 ? rows : localReviews.filter(r => r.city === city));
     } catch (err) {
-        res.json(mockReviews.filter(r => r.city === req.params.city));
+        res.json(localReviews.filter(r => r.city === city));
     }
 });
 
 router.post('/reviews', async (req, res) => {
     const { userId, city, rating, comment } = req.body;
+
+    if (!city || !Number.isFinite(Number(rating)) || Number(rating) < 1 || Number(rating) > 5) {
+        return res.status(400).json({ error: 'city and rating (1-5) are required' });
+    }
+
+    const sanitizedReview = {
+        city: String(city).trim(),
+        user_name: userId ? `User${userId}` : 'Guest',
+        rating: Number(rating),
+        comment: String(comment || '').trim(),
+        created_at: new Date().toISOString(),
+    };
+
     try {
         await db.execute(
             'INSERT INTO reviews (user_id, destination_name, rating, comment) VALUES (?, ?, ?, ?)',
-            [userId || null, city, rating, comment]
+            [userId || null, sanitizedReview.city, sanitizedReview.rating, sanitizedReview.comment]
         );
         res.status(201).json({ message: 'Review added' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        if (!isDatabaseUnavailable(err)) {
+            const msg = String(err?.message || '').toLowerCase();
+            if (!msg.includes('reviews')) {
+                return res.status(500).json({ error: err.message });
+            }
+        }
+
+        localReviews.unshift(sanitizedReview);
+        res.status(201).json({ message: 'Review added (local mode)', source: 'local' });
     }
 });
 
 // ── PAYMENTS (MOCK CHECKOUT) ──
 router.post('/checkout', async (req, res) => {
     const { amount, purpose } = req.body;
+    const normalizedAmount = Number(amount);
+    const normalizedPurpose = String(purpose || '').trim();
+
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0 || normalizedPurpose.length === 0) {
+        return res.status(400).json({
+            success: false,
+            error: 'amount (> 0) and purpose are required',
+        });
+    }
+
     // Simulate payment processor delay
     setTimeout(() => {
         res.json({
             success: true,
             transactionId: 'txn_' + Math.random().toString(36).substr(2, 9),
-            message: `Processed ₹${amount} for ${purpose}`
+            amount: normalizedAmount,
+            purpose: normalizedPurpose,
+            currency: 'INR',
+            message: `Processed ₹${normalizedAmount} for ${normalizedPurpose}`
         });
     }, 1500);
 });
@@ -566,7 +1014,7 @@ const mockDestinations = [
         travel_tips: 'Acclimatize at Leh for 2 full days before high-altitude trips. Inner Line Permit required for Nubra & Pangong.',
         nearby_places: 'Srinagar, Spiti Valley, Kargil',
         // Pangong Lake Ladakh — vivid blue waters against desert mountains
-        image_url: 'https://images.unsplash.com/photo-1596627116790-af6f46dddbf5?w=800&auto=format&fit=crop'
+        image_url: 'https://images.unsplash.com/photo-1581791538305-8ec692e0377b?w=800&auto=format&fit=crop'
     },
     {
         id: 7, name: 'Agra', state: 'Uttar Pradesh', category: 'Heritage',
@@ -586,7 +1034,7 @@ const mockDestinations = [
         travel_tips: 'Book Tiger Hill jeep at 3 AM for sunrise. Buy first-flush Darjeeling tea directly from gardens — far cheaper.',
         nearby_places: 'Gangtok, Kalimpong, Pelling, Mirik',
         // Darjeeling tea plantations with hills in the background
-        image_url: 'https://images.unsplash.com/photo-1571167530149-c1105da4c2c7?w=800&auto=format&fit=crop'
+        image_url: 'https://images.unsplash.com/photo-1442544213729-6a15f1611937?w=800&auto=format&fit=crop'
     },
     {
         id: 9, name: 'Mysore', state: 'Karnataka', category: 'Heritage',
@@ -596,7 +1044,7 @@ const mockDestinations = [
         travel_tips: 'Visit during Dussehra (Oct) when the palace is lit with 100,000 bulbs. Saree shopping in the palace complex is great.',
         nearby_places: 'Coorg, Ooty, Bangalore, Wayanad',
         // Mysore Palace — majestic heritage architecture
-        image_url: 'https://images.unsplash.com/photo-1600100395420-40aa0c46bd21?w=800&auto=format&fit=crop'
+        image_url: 'https://images.unsplash.com/photo-1524492412937-b28074a5d7da?w=800&auto=format&fit=crop'
     },
     {
         id: 10, name: 'Andaman Islands', state: 'Andaman & Nicobar', category: 'Beach',
@@ -606,7 +1054,7 @@ const mockDestinations = [
         travel_tips: 'Book inter-island ferries 2–3 days in advance. Carry cash — ATMs are scarce on smaller islands.',
         nearby_places: 'Port Blair, Neil Island, Baratang',
         // Crystal clear turquoise Andaman sea with tropical beach
-        image_url: 'https://images.unsplash.com/photo-1589135393670-9caec0c12e73?w=800&auto=format&fit=crop'
+        image_url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&auto=format&fit=crop'
     },
 ];
 
@@ -653,5 +1101,7 @@ const mockReviews = [
     { city: 'Manali', user_name: 'SnowLover', rating: 5, comment: 'Magical snowfall! Solang valley was gorgeous.', created_at: new Date().toISOString() },
     { city: 'Jaipur', user_name: 'HeritageFan', rating: 5, comment: 'The forts are breathtaking. Go early to beat the heat!', created_at: new Date().toISOString() }
 ];
+
+localReviews = [...mockReviews];
 
 module.exports = router;

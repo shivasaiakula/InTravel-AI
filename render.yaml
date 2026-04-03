@@ -26,33 +26,14 @@ services:
       - key: NODE_ENV
         value: production
       - key: DB_HOST
-        fromService:
-          name: intravel-db
-          type: database
-          property: host
+        sync: false
       - key: DB_USER
-        fromService:
-          name: intravel-db
-          type: database
-          property: user
+        sync: false
       - key: DB_PASSWORD
-        fromService:
-          name: intravel-db
-          type: database
-          property: password
+        sync: false
       - key: DB_NAME
-        fromService:
-          name: intravel-db
-          type: database
-          property: name
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: GEMINI_API_KEY
         sync: false
-
-databases:
-  # 💾 Database: Managed PostgreSQL (Render Free Tier)
-  - name: intravel-db
-    databaseName: indian_travel_platform
-    user: admin
-    plan: free

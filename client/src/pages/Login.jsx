@@ -8,18 +8,29 @@ function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setErr('');
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !password) {
+      setErr('Email and password are required');
+      return;
+    }
+
+    setLoading(true);
     try {
-      const { data } = await axios.post('/api/login', { email, password });
+      const { data } = await axios.post('/api/login', { email: normalizedEmail, password });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       navigate('/dashboard');
     } catch (error) {
       setErr(error?.response?.data?.error || 'Invalid email or password');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -32,7 +43,7 @@ function Login() {
         <form onSubmit={handleLogin}>
           <div className="form-group">
             <label>Email Address</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
           </div>
           <div className="form-group">
             <label>Password</label>
@@ -41,6 +52,7 @@ function Login() {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
                 required
               />
               <button
@@ -53,7 +65,9 @@ function Login() {
               </button>
             </div>
           </div>
-          <button type="submit" className="button-primary w-full">Sign In</button>
+          <button type="submit" className="button-primary w-full" disabled={loading}>
+            {loading ? 'Signing In...' : 'Sign In'}
+          </button>
         </form>
         <p className="auth-link-row"><Link to="/forgot-password">Forgot password?</Link></p>
         <p className="auth-footer">Don't have an account? <Link to="/register">Sign Up</Link></p>

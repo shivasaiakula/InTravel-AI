@@ -9,17 +9,36 @@ function Register() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const navigate = useNavigate();
+
+  const isStrongPassword = (value) => value.length >= 8 && /[A-Za-z]/.test(value) && /\d/.test(value);
 
   const handleRegister = async (e) => {
     e.preventDefault();
     setErr('');
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedUsername = username.trim();
+    if (!normalizedUsername || !normalizedEmail || !password) {
+      setErr('Username, email, and password are required');
+      return;
+    }
+
+    if (!isStrongPassword(password)) {
+      setErr('Password must be at least 8 characters and include letters and numbers');
+      return;
+    }
+
+    setLoading(true);
     try {
-      await axios.post('/api/register', { username, email, password });
+      await axios.post('/api/register', { username: normalizedUsername, email: normalizedEmail, password });
       navigate('/login');
     } catch (error) {
       setErr(error?.response?.data?.error || 'Registration failed');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -32,11 +51,11 @@ function Register() {
         <form onSubmit={handleRegister}>
           <div className="form-group">
             <label>Username</label>
-            <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} required />
+            <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required />
           </div>
           <div className="form-group">
             <label>Email Address</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
           </div>
           <div className="form-group">
             <label>Password</label>
@@ -45,6 +64,8 @@ function Register() {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
+                minLength={8}
                 required
               />
               <button
@@ -57,7 +78,10 @@ function Register() {
               </button>
             </div>
           </div>
-          <button type="submit" className="button-primary w-full">Sign Up</button>
+          <p className="auth-link-row">Use at least 8 characters, with letters and numbers.</p>
+          <button type="submit" className="button-primary w-full" disabled={loading}>
+            {loading ? 'Creating Account...' : 'Sign Up'}
+          </button>
         </form>
         <p className="auth-footer">Already have an account? <Link to="/login">Sign In</Link></p>
       </div>

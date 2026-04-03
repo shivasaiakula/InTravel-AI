@@ -10,22 +10,43 @@ function ForgotPassword() {
     const [newPassword, setNewPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [sent, setSent] = useState(false);
+    const [loadingRequest, setLoadingRequest] = useState(false);
+    const [loadingVerify, setLoadingVerify] = useState(false);
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
+
+    function normalizedEmail(value) {
+        return value.trim().toLowerCase();
+    }
+
+    function isStrongPassword(value) {
+        return value.length >= 8 && /[A-Za-z]/.test(value) && /\d/.test(value);
+    }
 
     async function requestOtp(e) {
         e.preventDefault();
         setError('');
         setMessage('');
+
+        const cleanEmail = normalizedEmail(email);
+        if (!cleanEmail) {
+            setError('Please enter your email address.');
+            return;
+        }
+
+        setLoadingRequest(true);
         try {
-            const { data } = await axios.post('/api/auth/request-reset', { email });
+            const { data } = await axios.post('/api/auth/request-reset', { email: cleanEmail });
+            setEmail(cleanEmail);
             setSent(true);
-            setMessage(data.message || 'OTP sent. Please check your email.');
+            setMessage(data.message || 'If an account exists, an OTP has been generated.');
             if (data.debugOtp) {
                 setMessage((prev) => `${prev} Dev OTP: ${data.debugOtp}`);
             }
         } catch (err) {
             setError(err?.response?.data?.error || 'Unable to send OTP');
+        } finally {
+            setLoadingRequest(false);
         }
     }
 
@@ -33,10 +54,22 @@ function ForgotPassword() {
         e.preventDefault();
         setError('');
         setMessage('');
+
+        if (otp.trim().length !== 6) {
+            setError('OTP must be exactly 6 digits.');
+            return;
+        }
+
+        if (!isStrongPassword(newPassword)) {
+            setError('Password must be at least 8 characters and include letters and numbers.');
+            return;
+        }
+
+        setLoadingVerify(true);
         try {
             const { data } = await axios.post('/api/auth/verify-reset', {
-                email,
-                otp,
+                email: normalizedEmail(email),
+                otp: otp.trim(),
                 newPassword,
             });
             setMessage(data.message || 'Password updated successfully. You can login now.');
@@ -44,6 +77,8 @@ function ForgotPassword() {
             setNewPassword('');
         } catch (err) {
             setError(err?.response?.data?.error || 'Reset failed');
+        } finally {
+            setLoadingVerify(false);
         }
     }
 
@@ -54,7 +89,7 @@ function ForgotPassword() {
                 <p>Enter your email to receive an OTP and set a new password.</p>
 
                 {error && <p className="error">{error}</p>}
-                {message && <p className="auth-link-row">{message}</p>}
+                {message && <p className="success">{message}</p>}
 
                 {!sent ? (
                     <form onSubmit={requestOtp}>
@@ -64,10 +99,13 @@ function ForgotPassword() {
                                 type="email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
+                                autoComplete="email"
                                 required
                             />
                         </div>
-                        <button type="submit" className="button-primary w-full">Send OTP</button>
+                        <button type="submit" className="button-primary w-full" disabled={loadingRequest}>
+                            {loadingRequest ? 'Sending...' : 'Send OTP'}
+                        </button>
                     </form>
                 ) : (
                     <form onSubmit={verifyOtpAndReset}>
@@ -84,6 +122,8 @@ function ForgotPassword() {
                                 required
                                 minLength={6}
                                 maxLength={6}
+                                inputMode="numeric"
+                                pattern="[0-9]{6}"
                             />
                         </div>
                         <div className="form-group">
@@ -94,7 +134,8 @@ function ForgotPassword() {
                                     value={newPassword}
                                     onChange={(e) => setNewPassword(e.target.value)}
                                     required
-                                    minLength={6}
+                                    minLength={8}
+                                    autoComplete="new-password"
                                 />
                                 <button
                                     type="button"
@@ -106,7 +147,13 @@ function ForgotPassword() {
                                 </button>
                             </div>
                         </div>
-                        <button type="submit" className="button-primary w-full">Verify OTP & Reset</button>
+                        <p className="auth-link-row">Use at least 8 characters, with letters and numbers.</p>
+                        <button type="submit" className="button-primary w-full" disabled={loadingVerify}>
+                            {loadingVerify ? 'Updating...' : 'Verify OTP & Reset'}
+                        </button>
+                        <button type="button" className="button-secondary w-full" onClick={() => setSent(false)} disabled={loadingVerify}>
+                            Resend OTP
+                        </button>
                     </form>
                 )}
 

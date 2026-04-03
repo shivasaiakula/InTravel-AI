@@ -81,6 +81,26 @@
     width: 100%;
 }
 
+.button-primary:disabled,
+.button-secondary:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.button-secondary {
+    margin-top: 0.75rem;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 0.8rem 1rem;
+}
+
+.button-secondary:hover:not(:disabled) {
+    border-color: var(--primary-light);
+    color: var(--primary-light);
+}
+
 .auth-link-row {
     margin-top: 0.9rem;
     margin-bottom: 0;
@@ -105,4 +125,17 @@
 .error {
     color: var(--accent);
     margin-bottom: 1rem;
+}
+
+.success {
+    color: #7ee081;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+}
+
+@media (max-width: 560px) {
+    .auth-card {
+        width: 100%;
+        padding: 1.5rem;
+    }
 }

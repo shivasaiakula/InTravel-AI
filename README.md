@@ -8,7 +8,7 @@ InTravel AI is a modern, AI-powered travel platform designed specifically for ex
 - **Transport Search**: City-to-city route options (Flight, Train, Bus).
 - **User Dashboard**: Save trips and analyze your travel budget with interactive charts.
 - **Travel Chatbot**: AI assistant for all your Indian travel queries.
-- **Auth System**: Secure login and registration.
+- **Auth System**: Secure login, registration, and OTP password reset.
 
 ## 🛠️ Tech Stack
 - **Frontend**: React.js, Vite, Framer Motion, Chart.js, Lucide Icons.
@@ -44,11 +44,22 @@ InTravel AI is a modern, AI-powered travel platform designed specifically for ex
    DB_NAME=indian_travel_platform
    JWT_SECRET=travel_secret_2024
    GEMINI_API_KEY=your_google_gemini_api_key
+   APP_NAME=InTravel AI
+   SMTP_HOST=smtp.example.com
+   SMTP_PORT=587
+   SMTP_USER=your_smtp_user
+   SMTP_PASS=your_smtp_password
+   SMTP_FROM=no-reply@example.com
    ```
 4. Start the server:
    ```bash
    npm run dev
    ```
+
+On Windows PowerShell with strict execution policy, use:
+```bash
+npm.cmd run dev
+```
 
 ### 4. Frontend Setup
 1. Navigate to the `client` folder:
@@ -63,11 +74,34 @@ InTravel AI is a modern, AI-powered travel platform designed specifically for ex
    ```bash
    npm run dev
    ```
+
+On Windows PowerShell with strict execution policy, use:
+```bash
+npm.cmd run dev
+```
+
 4. Open `http://localhost:3000` in your browser.
+
+### 5. One Command Local Startup (Windows)
+From repo root:
+```bash
+run-app.bat
+```
+
+### 6. Auth API Smoke Test
+Start the backend, then run:
+```bash
+cd server
+npm.cmd run smoke:auth
+```
+
+If backend is in production mode and does not return `debugOtp`, configure SMTP env vars and verify the reset step using your mailbox OTP.
 
 ## 🔌 API Routes
 - `POST /api/register` - Register user
 - `POST /api/login` - Login user
+- `POST /api/auth/request-reset` - Request OTP for password reset
+- `POST /api/auth/verify-reset` - Verify OTP and update password
 - `GET /api/destinations` - Get all destinations
 - `GET /api/transport?from=X&to=Y` - Search routes
 - `GET /api/hotels?city=X` - Find hotels
@@ -93,6 +127,16 @@ This repository now includes a GitHub Actions workflow at `.github/workflows/dep
 In GitHub repository settings, add:
 - `RENDER_FRONTEND_DEPLOY_HOOK_URL`
 - `RENDER_BACKEND_DEPLOY_HOOK_URL`
+
+### 2.1 Configure Backend Environment on Render
+Set these variables on the `intravel-backend` service:
+- `DB_HOST`
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_NAME`
+- `GEMINI_API_KEY`
+
+Use a MySQL-compatible database, since the backend uses `mysql2`.
 
 ### 3. Deploy
 - Push to `main`, or
