@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Compass, Map, User, LogOut, BarChart3, Menu, X, Sparkles, Package, Trophy, Search } from 'lucide-react';
+import { Compass, Map, User, LogOut, BarChart3, Menu, X, Sparkles, Package, Trophy, Search, Plane, List } from 'lucide-react';
 import './Navbar.css';
 
 function Navbar({ onOpenCommandPalette }) {
@@ -27,6 +27,8 @@ function Navbar({ onOpenCommandPalette }) {
   const navLinks = [
     { to: '/', icon: <Compass size={16} />, label: 'Home' },
     { to: '/explore', icon: <Map size={16} />, label: 'Explore' },
+    { to: '/transport', icon: <Plane size={16} />, label: 'Transport' },
+    { to: '/bookings', icon: <List size={16} />, label: 'Bookings' },
     { to: '/planner', icon: <Sparkles size={16} />, label: 'AI Planner' },
     { to: '/budget', icon: <BarChart3 size={16} />, label: 'Budget' },
     { to: '/packing', icon: <Package size={16} />, label: 'Packing' },
@@ -37,7 +39,7 @@ function Navbar({ onOpenCommandPalette }) {
     <nav className={`navbar ${scrolled ? 'navbar-scrolled' : ''}`}>
       <Link to="/" className="nav-logo">
         <span className="logo-icon">🇮🇳</span>
-        <span className="heading-gradient">TravelIndia AI</span>
+        <span className="nav-logo-text heading-gradient">TravelIndia AI</span>
       </Link>
 
       <div className="nav-links desktop-nav">
@@ -46,10 +48,6 @@ function Navbar({ onOpenCommandPalette }) {
           <span>Quick Search</span>
           <span className="command-shortcut">Ctrl+K</span>
         </button>
-
-        <div className="theme-badge" aria-label="Simple theme enabled">
-          Simple Theme
-        </div>
 
         {navLinks.map(link => (
           <Link

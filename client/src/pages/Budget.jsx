@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import axios from 'axios';
 import { motion } from 'framer-motion';
 import { Doughnut, Bar, Line } from 'react-chartjs-2';
 import {
@@ -8,7 +9,7 @@ import {
 import {
   Wallet, TrendingDown, Hotel, Plane, Coffee, Zap, PlusCircle,
   Trash2, Calculator, Target, ArrowRight, ChevronUp, ChevronDown,
-  PieChart, BarChart3
+  PieChart, BarChart3, Save
 } from 'lucide-react';
 import './Budget.css';
 
@@ -40,15 +41,57 @@ const HOTEL_ALTERNATIVES = [
   { type: 'Airbnb', price: 2500, rating: 4.2, amenities: ['Kitchen', 'Private Space', 'Local Feel'], recommended: false },
 ];
 
+const CATEGORY_PRIORITIES = {
+  Flights: 1.2,
+  Accommodation: 1.15,
+  'Food & Dining': 1,
+  'Local Transport': 0.95,
+  Activities: 0.9,
+  Shopping: 0.7,
+  Miscellaneous: 0.75,
+};
+
+const MODE_PROFILES = {
+  'budget-first': {
+    label: 'Budget First',
+    demandFactor: 0.92,
+    overspendPenalty: 0.24,
+    actionThreshold: 450,
+  },
+  balanced: {
+    label: 'Balanced',
+    demandFactor: 1,
+    overspendPenalty: 0.16,
+    actionThreshold: 500,
+  },
+  'comfort-first': {
+    label: 'Comfort First',
+    demandFactor: 1.1,
+    overspendPenalty: 0.08,
+    actionThreshold: 600,
+  },
+};
+
 export default function BudgetPage() {
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [totalBudget, setTotalBudget] = useState(50000);
   const [destination, setDestination] = useState('Goa');
   const [days, setDays] = useState(5);
+  const [optimizerMode, setOptimizerMode] = useState('balanced');
   const [showAlternatives, setShowAlternatives] = useState(false);
-  const [activeView, setActiveView] = useState('doughnut');
+  const [activeView, setActiveView] = useState('optimizer');
   const [newCat, setNewCat] = useState({ name: '', icon: '💰', budget: 0 });
   const [showAddForm, setShowAddForm] = useState(false);
+  const [optimizerSaving, setOptimizerSaving] = useState(false);
+  const [optimizerStatus, setOptimizerStatus] = useState('');
+
+  const user = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || 'null');
+    } catch (error) {
+      return null;
+    }
+  }, []);
 
   const totalPlanned = categories.reduce((s, c) => s + c.budget, 0);
   const totalActual = categories.reduce((s, c) => s + c.actual, 0);
@@ -58,6 +101,73 @@ export default function BudgetPage() {
   const riskLevel = budgetPerDay < 3500 ? 'High' : budgetPerDay < 7000 ? 'Medium' : 'Low';
   const riskScore = riskLevel === 'High' ? 84 : riskLevel === 'Medium' ? 54 : 24;
   const riskColor = riskLevel === 'High' ? '#f43f5e' : riskLevel === 'Medium' ? '#f59e0b' : '#10b981';
+
+  const optimization = useMemo(() => {
+    const modeProfile = MODE_PROFILES[optimizerMode] || MODE_PROFILES.balanced;
+    const weighted = categories.map((cat) => {
+      const priority = CATEGORY_PRIORITIES[cat.name] ?? 0.85;
+      const usageRatio = cat.budget > 0 ? cat.actual / cat.budget : 1;
+      const safetyBuffer = usageRatio > 1 ? 1.12 : usageRatio < 0.75 ? 0.88 : 1;
+      const overspendPressure = usageRatio > 1 ? 1 + (usageRatio - 1) * modeProfile.overspendPenalty : 1;
+      const demand = Math.max(1, cat.actual * safetyBuffer, cat.budget * 0.72) * modeProfile.demandFactor * overspendPressure;
+      return {
+        ...cat,
+        priority,
+        weightedNeed: demand * priority,
+      };
+    });
+
+    const weightedTotal = weighted.reduce((sum, item) => sum + item.weightedNeed, 0) || 1;
+    const allocations = weighted.map((item) => {
+      const raw = (item.weightedNeed / weightedTotal) * totalBudget;
+      const suggested = Math.max(500, Math.round(raw / 100) * 100);
+      const delta = suggested - item.budget;
+      const action = delta > modeProfile.actionThreshold ? 'Increase' : delta < -modeProfile.actionThreshold ? 'Cut' : 'Keep';
+      const confidence = Math.min(
+        97,
+        Math.round(62 + item.priority * 18 + (item.actual > item.budget ? 10 : 0))
+      );
+
+      return {
+        id: item.id,
+        name: item.name,
+        icon: item.icon,
+        budget: item.budget,
+        actual: item.actual,
+        suggested,
+        delta,
+        action,
+        confidence,
+      };
+    });
+
+    const totalSuggested = allocations.reduce((sum, item) => sum + item.suggested, 0);
+    const diff = totalBudget - totalSuggested;
+    if (allocations.length > 0 && diff !== 0) {
+      allocations[0].suggested += diff;
+      allocations[0].delta = allocations[0].suggested - allocations[0].budget;
+      allocations[0].action = allocations[0].delta > modeProfile.actionThreshold ? 'Increase' : allocations[0].delta < -modeProfile.actionThreshold ? 'Cut' : 'Keep';
+    }
+
+    const recoverable = allocations.reduce((sum, item) => {
+      if (item.actual <= item.budget) return sum;
+      return sum + Math.round((item.actual - item.budget) * 0.35);
+    }, 0);
+
+    const runwayDays = Math.max(0, Math.floor((totalBudget - totalActual + recoverable) / Math.max(1, budgetPerDay)));
+    const topActions = allocations
+      .filter(item => item.action !== 'Keep')
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .slice(0, 3);
+
+    return {
+      allocations,
+      recoverable,
+      runwayDays,
+      topActions,
+      healthScore: Math.max(8, Math.min(98, Math.round(100 - ((totalActual / Math.max(totalBudget, 1)) * 62 + riskScore * 0.38)))),
+    };
+  }, [categories, totalBudget, totalActual, budgetPerDay, riskScore, optimizerMode]);
 
   const donutData = {
     labels: categories.map(c => c.name),
@@ -78,11 +188,34 @@ export default function BudgetPage() {
     ],
   };
 
+  const beforeAfterData = {
+    labels: optimization.allocations.map(item => item.name),
+    datasets: [
+      {
+        label: 'Current Allocation',
+        data: optimization.allocations.map(item => item.budget),
+        backgroundColor: 'rgba(99, 102, 241, 0.75)',
+        borderRadius: 8,
+      },
+      {
+        label: 'Optimized Allocation',
+        data: optimization.allocations.map(item => item.suggested),
+        backgroundColor: 'rgba(16, 185, 129, 0.75)',
+        borderRadius: 8,
+      },
+    ],
+  };
+
   const dailySpendData = {
     labels: Array.from({ length: days }, (_, i) => `Day ${i + 1}`),
     datasets: [{
       label: 'Daily Spend',
-      data: Array.from({ length: days }, () => Math.floor(totalActual / days * (0.8 + Math.random() * 0.4))),
+      data: Array.from({ length: days }, (_, i) => {
+        const baseline = totalActual / Math.max(1, days);
+        const wave = Math.sin((i + 1) * 1.25) * baseline * 0.12;
+        const trend = i * baseline * 0.03;
+        return Math.max(0, Math.round(baseline + wave + trend));
+      }),
       borderColor: '#6366f1',
       backgroundColor: 'rgba(99,102,241,0.1)',
       fill: true,
@@ -115,6 +248,84 @@ export default function BudgetPage() {
     setCategories(prev => prev.map(c => c.id === id ? { ...c, [field]: Number(value) } : c));
   };
 
+  const saveOptimizerProfile = async (categoriesOverride) => {
+    if (!user?.id) {
+      setOptimizerStatus('Login to save optimizer settings.');
+      return;
+    }
+
+    setOptimizerSaving(true);
+    try {
+      await axios.post('/api/budget/optimizer', {
+        userId: user.id,
+        destination,
+        days,
+        totalBudget,
+        mode: optimizerMode,
+        categories: categoriesOverride || categories,
+        recommendations: optimization.allocations,
+        metrics: {
+          healthScore: optimization.healthScore,
+          recoverable: optimization.recoverable,
+          runwayDays: optimization.runwayDays,
+        },
+      });
+      setOptimizerStatus('Optimizer profile saved.');
+    } catch (error) {
+      setOptimizerStatus(error?.response?.data?.error || 'Could not save optimizer profile.');
+    } finally {
+      setOptimizerSaving(false);
+    }
+  };
+
+  const loadOptimizerProfile = async () => {
+    if (!user?.id) return;
+
+    try {
+      const { data } = await axios.get(`/api/budget/optimizer/${user.id}`, {
+        params: { destination },
+      });
+
+      const profile = data?.profile;
+      if (!profile) return;
+
+      if (profile.totalBudget) setTotalBudget(Number(profile.totalBudget));
+      if (profile.days) setDays(Math.max(1, Number(profile.days)));
+      if (profile.mode) setOptimizerMode(profile.mode);
+      if (Array.isArray(profile.categories) && profile.categories.length > 0) {
+        setCategories(profile.categories.map((cat, index) => ({
+          ...cat,
+          id: cat.id || Date.now() + index,
+          color: cat.color || DEFAULT_CATEGORIES[index % DEFAULT_CATEGORIES.length].color,
+        })));
+      }
+
+      setOptimizerStatus('Loaded saved optimizer profile.');
+    } catch (error) {
+      setOptimizerStatus('Could not load saved optimizer profile.');
+    }
+  };
+
+  useEffect(() => {
+    loadOptimizerProfile();
+    // Destination is intentionally excluded to avoid loading on every keystroke.
+    // Users can save and reload manually after changing destination text.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!optimizerStatus) return undefined;
+    const timer = setTimeout(() => setOptimizerStatus(''), 2800);
+    return () => clearTimeout(timer);
+  }, [optimizerStatus]);
+
+  const applyOptimization = () => {
+    const recommendationMap = new Map(optimization.allocations.map(item => [item.id, item.suggested]));
+    const nextCategories = categories.map(cat => ({ ...cat, budget: recommendationMap.get(cat.id) ?? cat.budget }));
+    setCategories(nextCategories);
+    saveOptimizerProfile(nextCategories);
+  };
+
   return (
     <div className="budget-page section-container">
       <div className="section-header">
@@ -135,6 +346,14 @@ export default function BudgetPage() {
         <div className="config-item">
           <label>Total Budget (₹)</label>
           <input type="number" value={totalBudget} step="1000" onChange={e => setTotalBudget(Number(e.target.value))} />
+        </div>
+        <div className="config-item">
+          <label>Optimizer Mode</label>
+          <select value={optimizerMode} onChange={e => setOptimizerMode(e.target.value)}>
+            {Object.entries(MODE_PROFILES).map(([key, mode]) => (
+              <option key={key} value={key}>{mode.label}</option>
+            ))}
+          </select>
         </div>
         <div className="config-summary">
           <div className="cfg-stat">
@@ -167,6 +386,58 @@ export default function BudgetPage() {
         </p>
       </motion.div>
 
+      <motion.div className="optimizer-insights glass-card" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+        <div className="panel-header optimizer-head">
+          <h3><Zap size={18} /> Smart Optimizer Suggestions</h3>
+          <div className="optimizer-actions">
+            <span className="optimizer-mode-badge">{MODE_PROFILES[optimizerMode].label}</span>
+            <button className="button-primary btn-sm" onClick={applyOptimization}>Apply Recommendations</button>
+            <button className="button-ghost btn-sm" onClick={() => saveOptimizerProfile()} disabled={optimizerSaving}>
+              <Save size={14} /> {optimizerSaving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </div>
+        {optimizerStatus && <p className="optimizer-status">{optimizerStatus}</p>}
+        <div className="optimizer-meta">
+          <div className="optimizer-pill">
+            <span>Health Score</span>
+            <strong>{optimization.healthScore}%</strong>
+          </div>
+          <div className="optimizer-pill">
+            <span>Potential Recovery</span>
+            <strong className="text-green">₹{optimization.recoverable.toLocaleString('en-IN')}</strong>
+          </div>
+          <div className="optimizer-pill">
+            <span>Runway Gain</span>
+            <strong>{optimization.runwayDays} day(s)</strong>
+          </div>
+        </div>
+        <div className="optimizer-list">
+          {optimization.allocations.map(item => (
+            <div key={item.id} className="optimizer-row">
+              <div className="optimizer-main">
+                <span className="cat-icon-sm">{item.icon}</span>
+                <span className="cat-name">{item.name}</span>
+              </div>
+              <div className="optimizer-values">
+                <span>Now ₹{item.budget.toLocaleString('en-IN')}</span>
+                <ArrowRight size={14} />
+                <strong>₹{item.suggested.toLocaleString('en-IN')}</strong>
+              </div>
+              <div className={`optimizer-action ${item.action === 'Cut' ? 'is-cut' : item.action === 'Increase' ? 'is-up' : ''}`}>
+                {item.action} {item.delta !== 0 && `(${item.delta > 0 ? '+' : ''}₹${Math.abs(item.delta).toLocaleString('en-IN')})`}
+              </div>
+              <div className="optimizer-confidence">{item.confidence}% confidence</div>
+            </div>
+          ))}
+        </div>
+        {optimization.topActions.length > 0 && (
+          <p className="optimizer-footnote">
+            Priority moves: {optimization.topActions.map(item => `${item.name} (${item.action.toLowerCase()})`).join(', ')}.
+          </p>
+        )}
+      </motion.div>
+
       {/* Summary Cards */}
       <div className="budget-summary-row">
         {[
@@ -192,6 +463,9 @@ export default function BudgetPage() {
         {/* Chart Panel */}
         <div className="chart-panel glass-card">
           <div className="chart-tabs">
+            <button className={`chart-tab ${activeView === 'optimizer' ? 'active' : ''}`} onClick={() => setActiveView('optimizer')}>
+              <Target size={16} /> Before vs After
+            </button>
             <button className={`chart-tab ${activeView === 'doughnut' ? 'active' : ''}`} onClick={() => setActiveView('doughnut')}>
               <PieChart size={16} /> Breakdown
             </button>
@@ -203,6 +477,7 @@ export default function BudgetPage() {
             </button>
           </div>
           <div className="chart-area">
+            {activeView === 'optimizer' && <Bar data={beforeAfterData} options={chartOptions} />}
             {activeView === 'doughnut' && <Doughnut data={donutData} options={{ ...chartOptions, plugins: { ...chartOptions.plugins, legend: { ...chartOptions.plugins.legend, position: 'right' } } }} />}
             {activeView === 'bar' && <Bar data={barData} options={chartOptions} />}
             {activeView === 'line' && <Line data={dailySpendData} options={chartOptions} />}

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion, useInView } from 'framer-motion';
 import {
   Compass, Calendar, Calculator, Sparkles, TrendingUp, MapPin,
-  Star, Users, Award, ArrowRight, Plane, ChevronRight, Zap
+  Star, Award, ArrowRight, ChevronRight
 } from 'lucide-react';
 import './Home.css';
 
@@ -93,18 +93,18 @@ function buildPreviewItinerary({ destination, days, budget, vibe }) {
   const pace = safeDays <= 2 ? 'Fast-paced' : safeDays <= 5 ? 'Balanced' : 'Leisure';
 
   const vibeLibrary = {
-    culture: ['Old city walk', 'Local food trail', 'Museum or fort visit'],
-    adventure: ['Sunrise trek', 'Activity session', 'Sunset viewpoint'],
-    chill: ['Slow breakfast', 'Cafe hopping', 'Golden hour leisure'],
-    spiritual: ['Morning temple visit', 'Ritual or local ceremony', 'Silent evening reflection'],
+    culture: ['Heritage walk', 'Street food lane', 'Fort or museum visit', 'Craft market stop', 'Sunset photo point'],
+    adventure: ['Sunrise trail', 'Adventure activity', 'Scenic viewpoint', 'Nature drive', 'Evening camp vibe'],
+    chill: ['Slow breakfast', 'Cafe hopping', 'Leisure landmark stop', 'Wellness break', 'Golden hour stroll'],
+    spiritual: ['Temple or shrine visit', 'Local ritual experience', 'Ghat or prayer walk', 'Meditation break', 'Quiet evening reflection'],
   };
 
   const moments = vibeLibrary[vibe] || vibeLibrary.chill;
   const dayPlan = Array.from({ length: safeDays }).map((_, idx) => ({
     day: idx + 1,
-    morning: moments[0],
-    afternoon: moments[1],
-    evening: moments[2],
+    morning: moments[idx % moments.length],
+    afternoon: moments[(idx + 1) % moments.length],
+    evening: moments[(idx + 2) % moments.length],
   }));
 
   return {
@@ -121,7 +121,6 @@ export default function Home() {
   const [activeCategory, setActiveCategory] = useState(null);
   const [previewInput, setPreviewInput] = useState({ destination: 'Jaipur', days: 4, budget: 22000, vibe: 'culture' });
   const [previewPlan, setPreviewPlan] = useState(() => buildPreviewItinerary({ destination: 'Jaipur', days: 4, budget: 22000, vibe: 'culture' }));
-  const [weatherData] = useState({ temp: 28, condition: 'Sunny', city: 'Delhi' });
   const heroParticles = useMemo(() => {
     return Array.from({ length: 8 }).map((_, index) => ({
       id: index,
@@ -142,19 +141,8 @@ export default function Home() {
       <section className="deals-section section-container">
         <div className="deals-top-row">
           <div className="deals-title-wrap">
-            <span className="badge badge-cyan live-badge"><Zap size={12} /> Live Deals</span>
+            <span className="badge badge-cyan live-badge">Live Deals</span>
             <h3><TrendingUp size={18} /> Real-time travel drops and flash offers</h3>
-          </div>
-          <div className="home-utility-strip glass-card-sm">
-            <span>Use Ctrl/Cmd + K for instant navigation</span>
-            <div className="home-utility-actions">
-              <Link to="/planner" className="button-primary">
-                <Sparkles size={14} /> Plan Now
-              </Link>
-              <Link to="/explore" className="button-secondary">
-                <Compass size={14} /> Explore Cities
-              </Link>
-            </div>
           </div>
         </div>
 
@@ -210,24 +198,7 @@ export default function Home() {
               <Sparkles size={18} /> Plan with AI
             </Link>
           </div>
-          <div className="hero-scroll-hint">
-            <div className="scroll-indicator" />
-            <span>Scroll to discover</span>
-          </div>
         </motion.div>
-
-        <div className="hero-float-cards">
-          <motion.div className="float-card glass-card-sm" style={{ top: '15%', right: '8%' }}
-            animate={{ y: [0, -12, 0] }} transition={{ duration: 3, repeat: Infinity }}>
-            <Plane size={20} color="#6366f1" />
-            <div><div className="fc-title">Flights Found</div><div className="fc-val">2,847</div></div>
-          </motion.div>
-          <motion.div className="float-card glass-card-sm" style={{ top: '40%', left: '3%' }}
-            animate={{ y: [0, -8, 0] }} transition={{ duration: 3.5, repeat: Infinity, delay: 0.5 }}>
-            <Users size={20} color="#10b981" />
-            <div><div className="fc-title">Happy Travelers</div><div className="fc-val">50K+</div></div>
-          </motion.div>
-        </div>
       </section>
 
       {/* ── STATS ROW ── */}
@@ -253,8 +224,8 @@ export default function Home() {
           <form className="preview-form glass-card" onSubmit={handlePreviewSubmit}>
             <div className="preview-head">
               <span className="badge">Quick Preview</span>
-              <h3>Build a sample itinerary in 10 seconds</h3>
-              <p>Try destination, trip length, and budget to see an instant travel blueprint.</p>
+              <h3>Create a sample trip in seconds</h3>
+              <p>Set destination, days, and budget to preview a practical day-wise plan instantly.</p>
             </div>
 
             <div className="form-group">
@@ -262,7 +233,7 @@ export default function Home() {
               <input
                 value={previewInput.destination}
                 onChange={(e) => setPreviewInput((prev) => ({ ...prev, destination: e.target.value }))}
-                placeholder="Example: Kochi"
+                placeholder="Example: Udaipur"
                 required
               />
             </div>
@@ -304,7 +275,7 @@ export default function Home() {
             </div>
 
             <button className="button-primary w-full" type="submit">
-              <Sparkles size={16} /> Generate Sample Plan
+              <Sparkles size={16} /> Generate Preview Plan
             </button>
           </form>
 
@@ -334,11 +305,11 @@ export default function Home() {
                 <div key={dayItem.day} className="preview-day-row">
                   <div className="preview-day-title">Day {dayItem.day}</div>
                   <div className="preview-day-flow">
-                    <span>{dayItem.morning}</span>
-                    <ArrowRight size={13} />
-                    <span>{dayItem.afternoon}</span>
-                    <ArrowRight size={13} />
-                    <span>{dayItem.evening}</span>
+                    <span className="preview-stop">{dayItem.morning}</span>
+                    <span className="preview-sep">•</span>
+                    <span className="preview-stop">{dayItem.afternoon}</span>
+                    <span className="preview-sep">•</span>
+                    <span className="preview-stop">{dayItem.evening}</span>
                   </div>
                 </div>
               ))}

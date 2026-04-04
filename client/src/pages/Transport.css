@@ -12,6 +12,65 @@
     margin-top: 2rem;
 }
 
+.booking-controls {
+    margin-top: 1.25rem;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.8rem;
+}
+
+.booking-control {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    text-align: left;
+}
+
+.booking-control label {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.booking-control input,
+.booking-control select {
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.06);
+    color: white;
+    border-radius: 10px;
+    padding: 0.65rem 0.75rem;
+    outline: none;
+}
+
+.booking-control option {
+    color: #111;
+}
+
+.compare-chip {
+    width: 100%;
+    text-align: center;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 0.62rem 0.75rem;
+    font-size: 0.82rem;
+}
+
+.booking-success,
+.booking-error {
+    margin-top: 0.75rem;
+    font-size: 0.95rem;
+}
+
+.booking-success {
+    color: #22c55e;
+}
+
+.booking-error {
+    color: #f87171;
+}
+
 .input-field {
     display: flex;
     align-items: center;
@@ -32,12 +91,41 @@
     width: 100%;
 }
 
-.divider-icon { color: var(--text-muted); opacity: 0.5; }
+.divider-icon {
+    color: var(--text-muted);
+    opacity: 0.5;
+}
 
 .results-container {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+}
+
+.compare-summary {
+    padding: 0.8rem 1rem;
+    border: 1px solid var(--glass-border);
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.compare-summary strong {
+    color: var(--text);
+}
+
+.best-value-summary {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+}
+
+.best-value-help {
+    display: block;
+    margin-top: 0.18rem;
+    font-size: 0.74rem;
+    color: var(--text-muted);
 }
 
 .transport-card {
@@ -51,7 +139,8 @@
 
 .mode-badge {
     position: absolute;
-    top: 1rem; right: 1rem;
+    top: 1rem;
+    right: 1rem;
     background: var(--glass);
     padding: 0.5rem 1rem;
     border-radius: 20px;
@@ -63,6 +152,47 @@
     color: var(--primary);
 }
 
+.reality-pill {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    color: #86efac;
+    border-radius: 999px;
+    padding: 0.24rem 0.65rem;
+    font-size: 0.74rem;
+    font-weight: 700;
+    margin-top: 0.8rem;
+    margin-bottom: 0.8rem;
+}
+
+.best-value-pill {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    color: #93c5fd;
+    border-radius: 999px;
+    padding: 0.22rem 0.65rem;
+    font-size: 0.74rem;
+    font-weight: 700;
+    margin-bottom: 0.8rem;
+}
+
+.risk-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 0.2rem;
+}
+
+.risk-chip {
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 999px;
+    padding: 0.22rem 0.55rem;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
 .card-top {
     display: flex;
     justify-content: space-between;
@@ -70,8 +200,15 @@
     padding: 1rem 3rem;
 }
 
-.city-info h4 { font-size: 1.8rem; margin-bottom: 0.3rem; }
-.city-info p { color: var(--text-muted); font-size: 0.9rem; }
+.city-info h4 {
+    font-size: 1.8rem;
+    margin-bottom: 0.3rem;
+}
+
+.city-info p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
 
 .journey-info {
     flex: 1;
@@ -90,13 +227,24 @@
 
 .line::after {
     content: '';
-    width: 10px; height: 10px;
+    width: 10px;
+    height: 10px;
     background: var(--text-muted);
     border-radius: 50%;
-    position: absolute; right: -5px; top: -4px;
+    position: absolute;
+    right: -5px;
+    top: -4px;
 }
 
-.journey-info p { font-size: 0.9rem; color: var(--text-muted); font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 0.5rem; }
+.journey-info p {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
 
 .card-bottom {
     display: flex;
@@ -106,7 +254,48 @@
     padding-top: 1.5rem;
 }
 
-.price-tag { font-size: 2rem; font-weight: 800; color: var(--accent); display: flex; align-items: center; gap: 0.5rem; }
-.btn-sm { padding: 0.6rem 2rem; font-size: 0.9rem; }
+.price-tag {
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
 
-.no-results { text-align: center; color: var(--text-muted); padding: 3rem; font-size: 1.1rem; }
+.price-compare-row {
+    margin-top: 0.35rem;
+}
+
+.cheapest-chip {
+    display: inline-block;
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    color: #86efac;
+    border-radius: 999px;
+    padding: 0.12rem 0.55rem;
+    font-size: 0.74rem;
+    font-weight: 700;
+}
+
+.price-delta {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.btn-sm {
+    padding: 0.6rem 2rem;
+    font-size: 0.9rem;
+}
+
+.no-results {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 3rem;
+    font-size: 1.1rem;
+}
+
+@media (max-width: 920px) {
+    .booking-controls {
+        grid-template-columns: 1fr;
+    }
+}

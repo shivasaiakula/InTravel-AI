@@ -133,6 +133,12 @@
     font-size: 0.9rem;
 }
 
+.auth-tip {
+    color: var(--text-muted);
+    margin-bottom: 0.8rem;
+    font-size: 0.86rem;
+}
+
 @media (max-width: 560px) {
     .auth-card {
         width: 100%;

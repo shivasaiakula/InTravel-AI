@@ -43,7 +43,9 @@ const localUsersByEmail = new Map();
 const resetOtpStore = new Map();
 const localBudgetProfiles = new Map();
 let localReviews = [];
+let localBookings = [];
 let budgetProfilesTableReady = false;
+let bookingsTableReady = false;
 const authRateStore = new Map();
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -51,7 +53,17 @@ const OTP_EXPIRY_MS = 10 * 60 * 1000;
 const OTP_VERIFY_MAX_ATTEMPTS = 5;
 const REQUEST_RESET_LIMIT = { max: 5, windowMs: 15 * 60 * 1000 };
 const LOGIN_LIMIT = { max: 10, windowMs: 15 * 60 * 1000 };
+const VERIFY_RESET_LIMIT = { max: 8, windowMs: 15 * 60 * 1000 };
 let otpTransporter;
+
+function logAuthAudit(event, details = {}) {
+    console.log(JSON.stringify({
+        ts: new Date().toISOString(),
+        channel: 'auth_audit',
+        event,
+        ...details,
+    }));
+}
 
 function budgetProfileKey(userId, destination) {
     return `${String(userId || 'guest')}:${String(destination || 'default').trim().toLowerCase()}`;
@@ -101,6 +113,55 @@ async function ensureBudgetProfilesTable() {
         )
     `);
     budgetProfilesTableReady = true;
+}
+
+async function ensureBookingsTable() {
+    if (bookingsTableReady) return;
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS travel_bookings (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            booking_type VARCHAR(20) NOT NULL,
+            user_id INT NULL,
+            title VARCHAR(180) NOT NULL,
+            city VARCHAR(120) NOT NULL,
+            amount DECIMAL(12, 2) NOT NULL DEFAULT 0,
+            details_json JSON,
+            status VARCHAR(20) NOT NULL DEFAULT 'CONFIRMED',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    bookingsTableReady = true;
+}
+
+function sanitizeBookingPayload(payload) {
+    const type = String(payload?.type || '').trim().toLowerCase();
+    const validType = ['hotel', 'transport'].includes(type) ? type : null;
+    if (!validType) {
+        return { error: 'Booking type must be hotel or transport' };
+    }
+
+    const title = String(payload?.title || '').trim().slice(0, 180);
+    const city = String(payload?.city || '').trim().slice(0, 120);
+    const amount = Math.max(0, Number(payload?.amount) || 0);
+    const details = typeof payload?.details === 'object' && payload?.details !== null ? payload.details : {};
+    const userIdRaw = Number(payload?.userId);
+    const userId = Number.isFinite(userIdRaw) && userIdRaw > 0 ? Math.floor(userIdRaw) : null;
+
+    if (!title || !city) {
+        return { error: 'Booking title and city are required' };
+    }
+
+    return {
+        booking: {
+            type: validType,
+            userId,
+            title,
+            city,
+            amount,
+            details,
+            status: 'CONFIRMED',
+        }
+    };
 }
 
 function isDatabaseUnavailable(error) {
@@ -224,11 +285,13 @@ router.post('/register', async (req, res) => {
         // Check if user already exists
         const [existing] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
         if (existing && existing.length > 0) {
+            logAuthAudit('register_rejected_existing_email', { email });
             return res.status(400).json({ error: 'Email already exists' });
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
         await db.execute('INSERT INTO users (username, email, password) VALUES (?, ?, ?)', [normalizedUsername, email, hashedPassword]);
+        logAuthAudit('register_success', { email, source: 'db' });
         res.status(201).json({ message: 'User registered successfully!' });
     } catch (error) {
         if (isDatabaseUnavailable(error)) {
@@ -246,6 +309,7 @@ router.post('/register', async (req, res) => {
             }
 
             if (localUsersByEmail.has(email)) {
+                logAuthAudit('register_rejected_existing_email', { email, source: 'local' });
                 return res.status(400).json({ error: 'Email already exists' });
             }
 
@@ -256,6 +320,7 @@ router.post('/register', async (req, res) => {
                 email,
                 password: hashedPassword,
             });
+            logAuthAudit('register_success', { email, source: 'local' });
             return res.status(201).json({ message: 'User registered successfully (local mode)' });
         }
         res.status(500).json({ error: error.message });
@@ -270,7 +335,12 @@ router.post('/login', async (req, res) => {
         const loginRate = consumeRateLimit(loginRateKey, LOGIN_LIMIT);
 
         if (loginRate.limited) {
-            return res.status(429).json({ error: 'Too many login attempts. Please try again later.' });
+            const retryAfterSeconds = Math.ceil((loginRate.retryAfterMs || 0) / 1000);
+            logAuthAudit('login_rate_limited', { email, retryAfterSeconds });
+            return res.status(429).json({
+                error: 'Too many login attempts. Please try again later.',
+                retryAfterSeconds,
+            });
         }
 
         if (!email || !password) {
@@ -278,24 +348,38 @@ router.post('/login', async (req, res) => {
         }
 
         const [users] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
-        if (users.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+        if (users.length === 0) {
+            logAuthAudit('login_failed', { email, reason: 'user_not_found' });
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
 
         const valid = await bcrypt.compare(password, users[0].password);
-        if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+        if (!valid) {
+            logAuthAudit('login_failed', { email, reason: 'invalid_password' });
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
 
         const token = jwt.sign({ id: users[0].id, username: users[0].username }, process.env.JWT_SECRET || 'secret', { expiresIn: '7d' });
+        logAuthAudit('login_success', { email, source: 'db' });
         res.json({ token, user: { id: users[0].id, username: users[0].username } });
     } catch (error) {
         if (isDatabaseUnavailable(error)) {
             const email = normalizeEmail(req.body?.email);
             const { password } = req.body;
             const user = localUsersByEmail.get(email);
-            if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+            if (!user) {
+                logAuthAudit('login_failed', { email, reason: 'user_not_found', source: 'local' });
+                return res.status(401).json({ error: 'Invalid credentials' });
+            }
 
             const valid = await bcrypt.compare(password, user.password);
-            if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+            if (!valid) {
+                logAuthAudit('login_failed', { email, reason: 'invalid_password', source: 'local' });
+                return res.status(401).json({ error: 'Invalid credentials' });
+            }
 
             const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET || 'secret', { expiresIn: '7d' });
+            logAuthAudit('login_success', { email, source: 'local' });
             return res.json({ token, user: { id: user.id, username: user.username } });
         }
         res.status(500).json({ error: error.message });
@@ -310,12 +394,18 @@ router.post('/auth/request-reset', async (req, res) => {
         const resetRateKey = `request-reset:${extractClientIp(req)}:${email}`;
         const resetRate = consumeRateLimit(resetRateKey, REQUEST_RESET_LIMIT);
         if (resetRate.limited) {
-            return res.status(429).json({ error: 'Too many reset requests. Please try again later.' });
+            const retryAfterSeconds = Math.ceil((resetRate.retryAfterMs || 0) / 1000);
+            logAuthAudit('request_reset_rate_limited', { email, retryAfterSeconds });
+            return res.status(429).json({
+                error: 'Too many reset requests. Please try again later.',
+                retryAfterSeconds,
+            });
         }
 
         const { user } = await findUserByEmail(email);
         // Return generic response to avoid leaking account existence.
         if (!user) {
+            logAuthAudit('request_reset_accepted', { email, accountFound: false });
             return res.json({ message: 'If an account exists for this email, an OTP has been generated.' });
         }
 
@@ -326,6 +416,7 @@ router.post('/auth/request-reset', async (req, res) => {
             attempts: 0,
             expiresAt: Date.now() + OTP_EXPIRY_MS,
         });
+        logAuthAudit('request_reset_accepted', { email, accountFound: true });
 
         const response = {
             message: 'If an account exists for this email, an OTP has been generated.',
@@ -366,22 +457,42 @@ router.post('/auth/verify-reset', async (req, res) => {
             });
         }
 
+        const verifyRateKey = `verify-reset:${extractClientIp(req)}:${email}`;
+        const verifyRate = consumeRateLimit(verifyRateKey, VERIFY_RESET_LIMIT);
+        if (verifyRate.limited) {
+            const retryAfterSeconds = Math.ceil((verifyRate.retryAfterMs || 0) / 1000);
+            logAuthAudit('verify_reset_rate_limited', { email, retryAfterSeconds });
+            return res.status(429).json({
+                error: 'Too many OTP verification attempts. Please try again later.',
+                retryAfterSeconds,
+            });
+        }
+
         const otpEntry = resetOtpStore.get(email);
-        if (!otpEntry) return res.status(400).json({ error: 'No OTP request found for this email' });
+        if (!otpEntry) {
+            logAuthAudit('verify_reset_failed', { email, reason: 'missing_otp_session' });
+            return res.status(400).json({ error: 'No OTP request found for this email' });
+        }
         if (Date.now() > otpEntry.expiresAt) {
             resetOtpStore.delete(email);
+            logAuthAudit('verify_reset_failed', { email, reason: 'otp_expired' });
             return res.status(400).json({ error: 'OTP expired. Request a new one.' });
         }
 
         if (otpEntry.attempts >= OTP_VERIFY_MAX_ATTEMPTS) {
             resetOtpStore.delete(email);
-            return res.status(429).json({ error: 'Too many invalid attempts. Request a new OTP.' });
+            logAuthAudit('verify_reset_failed', { email, reason: 'max_attempts_reached' });
+            return res.status(429).json({
+                error: 'Too many invalid attempts. Request a new OTP.',
+                retryAfterSeconds: 0,
+            });
         }
 
         const validOtp = await bcrypt.compare(String(otp), otpEntry.otpHash);
         if (!validOtp) {
             otpEntry.attempts += 1;
             resetOtpStore.set(email, otpEntry);
+            logAuthAudit('verify_reset_failed', { email, reason: 'invalid_otp', attempts: otpEntry.attempts });
             return res.status(400).json({ error: 'Invalid OTP' });
         }
 
@@ -397,6 +508,7 @@ router.post('/auth/verify-reset', async (req, res) => {
         }
 
         resetOtpStore.delete(email);
+        logAuthAudit('verify_reset_success', { email });
         return res.json({ message: 'Password reset successful. Please login.' });
     } catch (error) {
         return res.status(500).json({ error: error.message });
@@ -420,13 +532,180 @@ router.get('/destinations/:id', async (req, res) => {
     } catch (err) { res.json(mockDestinations[0]); }
 });
 
+function parseDurationMinutes(durationValue) {
+    const value = String(durationValue || '').toLowerCase();
+    const hoursMatch = value.match(/(\d+)\s*h/);
+    const minsMatch = value.match(/(\d+)\s*m/);
+    const hours = hoursMatch ? Number(hoursMatch[1]) : 0;
+    const minutes = minsMatch ? Number(minsMatch[1]) : 0;
+    const total = (hours * 60) + minutes;
+    return total > 0 ? total : 120;
+}
+
+function hashString(input) {
+    const text = String(input || '');
+    let hash = 0;
+    for (let i = 0; i < text.length; i += 1) {
+        hash = ((hash << 5) - hash) + text.charCodeAt(i);
+        hash |= 0;
+    }
+    return Math.abs(hash);
+}
+
+function buildTransportReality(route) {
+    const mode = String(route?.mode || '').toLowerCase();
+    const durationMinutes = parseDurationMinutes(route?.duration);
+    const routeFingerprint = `${route?.from || route?.from_city || ''}|${route?.to || route?.to_city || ''}|${route?.operator || ''}|${route?.mode || ''}`;
+    const departureHour = 5 + (hashString(routeFingerprint) % 18); // 5 to 22
+    const transferCount = Math.max(0, Math.floor((durationMinutes - 240) / 360));
+
+    const baseByMode = {
+        flight: 84,
+        train: 79,
+        bus: 70,
+    };
+
+    let score = baseByMode[mode] || 72;
+    score -= Math.min(26, Math.floor(durationMinutes / 80));
+    score -= transferCount * 8;
+
+    if (departureHour <= 6) score -= 7;
+    if (departureHour >= 21) score -= 6;
+    if (durationMinutes <= 180) score += 5;
+
+    const realityScore = Math.max(35, Math.min(96, score));
+    const riskFactors = [];
+
+    if (transferCount > 0) riskFactors.push(`${transferCount} transfer risk`);
+    if (departureHour <= 6) riskFactors.push('early departure reliability risk');
+    if (departureHour >= 21) riskFactors.push('late-night arrival risk');
+    if (durationMinutes >= 720) riskFactors.push('long-duration fatigue risk');
+    if (riskFactors.length === 0) riskFactors.push('stable route pattern');
+
+    return {
+        realityScore,
+        riskFactors,
+        departureHour,
+    };
+}
+
+const MOOD_ROUTE_MAP = {
+    heritage: 'Prioritize forts, palaces, museums, old-town walks, and stories of local history.',
+    monsoon: 'Prioritize rain-friendly indoor stops, scenic monsoon viewpoints, and flexible transit buffers.',
+    'food-lanes': 'Prioritize market food lanes, regional dishes, cooking experiences, and trusted local eateries.',
+    spiritual: 'Prioritize temples/ghats/monasteries, peaceful timing windows, and reflective low-rush pacing.',
+};
+
+function buildMoodRoutePromptSegment(moodRoute) {
+    const key = String(moodRoute || '').trim().toLowerCase();
+    if (!key || !MOOD_ROUTE_MAP[key]) {
+        return 'Mood route: balanced exploration with culture, food, and local highlights.';
+    }
+    return `Mood route selected: ${key}. ${MOOD_ROUTE_MAP[key]}`;
+}
+
+function buildFamilyPromptSegment(familyFriendly) {
+    if (!familyFriendly) {
+        return 'Family friendly mode: disabled.';
+    }
+    return 'Family friendly mode: enabled. Keep walking transfers short, avoid steep/stair-heavy plans, reduce late-evening activity intensity, and include child/senior-friendly stops.';
+}
+
+function buildCrowdClimateWindows(city) {
+    const now = new Date();
+    const month = now.getMonth();
+    const hour = now.getHours();
+
+    const seasonHint = month >= 5 && month <= 8
+        ? 'monsoon humidity'
+        : (month >= 10 || month <= 1)
+            ? 'cooler season'
+            : 'warm daytime heat';
+
+    const windows = [
+        {
+            key: 'morning',
+            label: '6:00 AM - 9:00 AM',
+            crowdLevel: 'Low',
+            climateHint: month >= 5 && month <= 8 ? 'light rain possible' : 'pleasant breeze',
+            confidence: 86,
+            recommendation: 'Best for landmarks and photo spots before queues build up.',
+        },
+        {
+            key: 'late-morning',
+            label: '9:00 AM - 12:00 PM',
+            crowdLevel: 'Moderate',
+            climateHint: seasonHint,
+            confidence: 78,
+            recommendation: 'Good for museums, curated tours, and indoor heritage circuits.',
+        },
+        {
+            key: 'afternoon',
+            label: '12:00 PM - 3:00 PM',
+            crowdLevel: 'High',
+            climateHint: 'peak sun and traffic',
+            confidence: 72,
+            recommendation: 'Prefer AC cafes, rest breaks, or short transfer legs.',
+        },
+        {
+            key: 'evening',
+            label: '4:00 PM - 7:00 PM',
+            crowdLevel: 'Moderate',
+            climateHint: 'cooler golden hour',
+            confidence: 82,
+            recommendation: 'Great for promenades, ghats, and street food lanes.',
+        },
+    ];
+
+    const active = windows.find((item) => {
+        if (item.key === 'morning') return hour >= 6 && hour < 9;
+        if (item.key === 'late-morning') return hour >= 9 && hour < 12;
+        if (item.key === 'afternoon') return hour >= 12 && hour < 16;
+        return hour >= 16 && hour < 20;
+    }) || windows[0];
+
+    return {
+        city,
+        windows: windows.map((item) => ({ ...item, isBestNow: item.key === active.key })),
+        confidenceState: active.confidence >= 70 ? 'high' : 'low',
+        generatedAt: now.toISOString(),
+    };
+}
+
 // ── TRANSPORT ROUTES ──
 router.get('/transport', async (req, res) => {
     const { from, to } = req.query;
     try {
         const [rows] = await db.execute('SELECT * FROM transport WHERE from_city = ? AND to_city = ?', [from, to]);
-        res.json(rows.length > 0 ? rows : mockTransport.filter(t => t.from === from && t.to === to));
-    } catch (err) { res.json(mockTransport.filter(t => t.from === from && t.to === to)); }
+        const sourceRows = rows.length > 0
+            ? rows
+            : mockTransport.filter(t => t.from === from && t.to === to);
+
+        const enriched = sourceRows.map((route) => {
+            const reality = buildTransportReality(route);
+            return {
+                ...route,
+                realityScore: reality.realityScore,
+                riskFactors: reality.riskFactors,
+                departureHour: reality.departureHour,
+            };
+        });
+
+        res.json(enriched);
+    } catch (err) {
+        const fallback = mockTransport
+            .filter(t => t.from === from && t.to === to)
+            .map((route) => {
+                const reality = buildTransportReality(route);
+                return {
+                    ...route,
+                    realityScore: reality.realityScore,
+                    riskFactors: reality.riskFactors,
+                    departureHour: reality.departureHour,
+                };
+            });
+        res.json(fallback);
+    }
 });
 
 // ── HOTEL ROUTES ──
@@ -436,6 +715,167 @@ router.get('/hotels', async (req, res) => {
         const [rows] = await db.execute('SELECT * FROM hotels WHERE city = ?', [city]);
         res.json(rows.length > 0 ? rows : mockHotels.filter(h => h.city === city));
     } catch (err) { res.json(mockHotels.filter(h => h.city === city)); }
+});
+
+router.post('/bookings', async (req, res) => {
+    const { booking, error } = sanitizeBookingPayload(req.body);
+    if (error) return res.status(400).json({ error });
+
+    try {
+        await ensureBookingsTable();
+        const [insertResult] = await db.execute(
+            `INSERT INTO travel_bookings (booking_type, user_id, title, city, amount, details_json, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+                booking.type,
+                booking.userId,
+                booking.title,
+                booking.city,
+                booking.amount,
+                JSON.stringify(booking.details),
+                booking.status,
+            ],
+        );
+
+        return res.status(201).json({
+            id: insertResult.insertId,
+            type: booking.type,
+            userId: booking.userId,
+            title: booking.title,
+            city: booking.city,
+            amount: booking.amount,
+            details: booking.details,
+            status: booking.status,
+            createdAt: new Date().toISOString(),
+        });
+    } catch (err) {
+        if (!isDatabaseUnavailable(err)) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        const localBooking = {
+            id: Date.now(),
+            type: booking.type,
+            userId: booking.userId,
+            title: booking.title,
+            city: booking.city,
+            amount: booking.amount,
+            details: booking.details,
+            status: booking.status,
+            createdAt: new Date().toISOString(),
+        };
+        localBookings = [localBooking, ...localBookings].slice(0, 500);
+        return res.status(201).json(localBooking);
+    }
+});
+
+router.get('/bookings', async (req, res) => {
+    const filterTypeRaw = String(req.query?.type || '').trim().toLowerCase();
+    const filterType = ['hotel', 'transport'].includes(filterTypeRaw) ? filterTypeRaw : null;
+    const userIdRaw = Number(req.query?.userId);
+    const filterUserId = Number.isFinite(userIdRaw) && userIdRaw > 0 ? Math.floor(userIdRaw) : null;
+
+    try {
+        await ensureBookingsTable();
+        const conditions = [];
+        const params = [];
+
+        if (filterType) {
+            conditions.push('booking_type = ?');
+            params.push(filterType);
+        }
+        if (filterUserId) {
+            conditions.push('user_id = ?');
+            params.push(filterUserId);
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const [rows] = await db.execute(
+            `SELECT id, booking_type, user_id, title, city, amount, details_json, status, created_at
+             FROM travel_bookings ${whereClause}
+             ORDER BY created_at DESC
+             LIMIT 100`,
+            params,
+        );
+
+        return res.json(rows.map((row) => ({
+            id: row.id,
+            type: row.booking_type,
+            userId: row.user_id,
+            title: row.title,
+            city: row.city,
+            amount: Number(row.amount) || 0,
+            details: typeof row.details_json === 'string' ? JSON.parse(row.details_json || '{}') : (row.details_json || {}),
+            status: row.status,
+            createdAt: row.created_at,
+        })));
+    } catch (err) {
+        if (!isDatabaseUnavailable(err)) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        let rows = [...localBookings];
+        if (filterType) rows = rows.filter((item) => item.type === filterType);
+        if (filterUserId) rows = rows.filter((item) => item.userId === filterUserId);
+        return res.json(rows.slice(0, 100));
+    }
+});
+
+router.delete('/bookings/:id', async (req, res) => {
+    const bookingId = Number(req.params?.id);
+    const userIdRaw = Number(req.query?.userId ?? req.body?.userId);
+    const userId = Number.isFinite(userIdRaw) && userIdRaw > 0 ? Math.floor(userIdRaw) : null;
+
+    if (!Number.isFinite(bookingId) || bookingId <= 0) {
+        return res.status(400).json({ error: 'Invalid booking id' });
+    }
+    if (!userId) {
+        return res.status(400).json({ error: 'User id is required to cancel booking' });
+    }
+
+    try {
+        await ensureBookingsTable();
+        const [rows] = await db.execute(
+            'SELECT id, status FROM travel_bookings WHERE id = ? AND user_id = ? LIMIT 1',
+            [bookingId, userId],
+        );
+
+        if (!rows?.length) {
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+
+        if (String(rows[0].status || '').toUpperCase() === 'CANCELLED') {
+            return res.status(409).json({ error: 'Booking is already cancelled' });
+        }
+
+        await db.execute(
+            'UPDATE travel_bookings SET status = ? WHERE id = ? AND user_id = ?',
+            ['CANCELLED', bookingId, userId],
+        );
+
+        return res.json({ success: true, message: 'Booking cancelled successfully' });
+    } catch (err) {
+        if (!isDatabaseUnavailable(err)) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        const index = localBookings.findIndex(
+            (item) => Number(item.id) === Number(bookingId) && Number(item.userId) === Number(userId),
+        );
+        if (index === -1) {
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+
+        if (String(localBookings[index].status || '').toUpperCase() === 'CANCELLED') {
+            return res.status(409).json({ error: 'Booking is already cancelled' });
+        }
+
+        localBookings[index] = {
+            ...localBookings[index],
+            status: 'CANCELLED',
+        };
+        return res.json({ success: true, message: 'Booking cancelled successfully' });
+    }
 });
 
 // ── NEARBY PLACE HELPERS (WITH API FALLBACK) ──
@@ -536,10 +976,13 @@ async function buildNearbyPlan(destination, requestedDays) {
 
 // ── AI TRIP PLANNER (ENHANCED) ──
 router.post('/ai/plan', async (req, res) => {
-    const { destination, days, duration, budget, purpose, budgetTier, styles, travelers } = req.body;
+    const { destination, days, duration, budget, purpose, budgetTier, styles, travelers, moodRoute, familyFriendly } = req.body;
     const requestedDays = Math.min(30, Math.max(1, Number(days ?? duration) || 1));
 
-    const cacheKey = `plan:${destination}:${requestedDays}:${budget}:${purpose}`;
+    const normalizedMood = String(moodRoute || '').trim().toLowerCase() || 'balanced';
+    const isFamilyFriendly = Boolean(familyFriendly);
+
+    const cacheKey = `plan:${destination}:${requestedDays}:${budget}:${purpose}:${normalizedMood}:${isFamilyFriendly ? 'family' : 'default'}`;
     const cached = getCached(cacheKey);
     if (cached) {
         if (typeof cached === 'string') {
@@ -554,17 +997,22 @@ router.post('/ai/plan', async (req, res) => {
         const styleContext = styles?.length > 0 ? `Travel preferences: ${styles.join(', ')}.` : '';
         const travelersCtx = travelers ? `Traveling with ${travelers} person(s).` : '';
         const tierCtx = budgetTier ? `Budget category: ${budgetTier}.` : '';
+        const moodCtx = buildMoodRoutePromptSegment(normalizedMood);
+        const familyCtx = buildFamilyPromptSegment(isFamilyFriendly);
 
         const prompt = `Create a detailed ${requestedDays}-day travel itinerary for ${destination}, India.
         
 Budget: ₹${budget} total. ${tierCtx}
-${purposeContext} ${travelersCtx} ${styleContext}
+    ${purposeContext} ${travelersCtx} ${styleContext}
+    ${moodCtx}
+    ${familyCtx}
 
 Structure each day as:
 Day [N] - [Creative Title]
 🌅 Morning: [specific activity with timing]
 🌞 Afternoon: [specific activity + local food recommendation]
 🌙 Evening: [specific activity]
+    🎭 Mood Note: [how this day reflects the selected mood route]
 💰 Estimated Day Cost: ₹[amount]
 💡 Pro Tip: [one unique local insider tip]
 
@@ -574,6 +1022,7 @@ Include:
 - Transport tips (auto-rickshaw, local bus, rental options)
 - Best photo spots for Instagram
 - Cost breakdown summary at the end
+- Keep all day labels sequential from Day 1 to Day ${requestedDays}
 
 Be specific, practical and engaging. Use emojis for visual clarity.`;
 
@@ -585,9 +1034,88 @@ Be specific, practical and engaging. Use emojis for visual clarity.`;
     } catch (error) {
         console.error("AI Generation Error:", error);
         // Smart fallback with personalized mock
-        const fallback = generateFallbackItinerary(destination, requestedDays, budget, purpose);
+        const fallback = generateFallbackItinerary(destination, requestedDays, budget, purpose, normalizedMood, isFamilyFriendly);
         const nearbyPlan = await buildNearbyPlan(destination, requestedDays);
         res.json({ itinerary: fallback, nearbyPlan, ai_fallback: true });
+    }
+});
+
+router.post('/ai/recover-day', async (req, res) => {
+    const {
+        destination,
+        dayNumber,
+        eventType,
+        existingDay,
+        budget,
+        moodRoute,
+        familyFriendly,
+    } = req.body || {};
+
+    const normalizedDay = Math.max(1, Number(dayNumber) || 1);
+    const normalizedEvent = String(eventType || '').trim().toLowerCase();
+    const allowedEvents = ['delay', 'rain', 'budget_overrun'];
+
+    if (!allowedEvents.includes(normalizedEvent)) {
+        return res.status(400).json({ error: 'eventType must be one of: delay, rain, budget_overrun' });
+    }
+
+    const moodCtx = buildMoodRoutePromptSegment(moodRoute);
+    const familyCtx = buildFamilyPromptSegment(Boolean(familyFriendly));
+    const destinationName = String(destination || 'your destination');
+    const safeBudget = Math.max(4000, Number(budget) || 20000);
+    const dayBudget = Math.max(800, Math.floor(safeBudget / Math.max(1, normalizedDay)));
+
+    const disruptionNoteMap = {
+        delay: 'Start later and reduce transfer friction while preserving must-do highlights.',
+        rain: 'Prefer weather-safe indoor or covered experiences and short-distance travel.',
+        budget_overrun: 'Reduce spend by prioritizing low-cost local options and free attractions.',
+    };
+
+    try {
+        const prompt = `You are re-planning exactly one travel day for ${destinationName}, India.
+
+Target day: Day ${normalizedDay}
+Disruption type: ${normalizedEvent}
+Current day plan summary: ${String(existingDay || '').slice(0, 700)}
+${moodCtx}
+${familyCtx}
+
+Write only one replacement day in this exact format:
+Day ${normalizedDay} - [Updated title]
+🌅 Morning: ...
+🌞 Afternoon: ...
+🌙 Evening: ...
+🎭 Mood Note: ...
+💰 Estimated Day Cost: ₹...
+💡 Recovery Tip: ...
+
+Additional guidance: ${disruptionNoteMap[normalizedEvent]}`;
+
+        const text = await generateGeminiText(prompt);
+        const normalized = ensureItineraryHasAllDays(text, 1, destinationName, dayBudget);
+        const recoveredDayText = normalized.split(/\n\n+/)[0] || normalized;
+
+        return res.json({
+            dayNumber: normalizedDay,
+            eventType: normalizedEvent,
+            recoveredDay: recoveredDayText,
+        });
+    } catch (error) {
+        const fallback = [
+            `Day ${normalizedDay} - Recovery plan for ${destinationName}`,
+            '🌅 Morning: Start with a low-friction local landmark and breakfast nearby.',
+            normalizedEvent === 'rain'
+                ? '🌞 Afternoon: Shift to an indoor museum/cafe circuit with short travel legs.'
+                : normalizedEvent === 'delay'
+                    ? '🌞 Afternoon: Focus on one priority attraction and skip long queues.'
+                    : '🌞 Afternoon: Choose budget-friendly local transport and affordable lunch spots.',
+            '🌙 Evening: Keep the evening relaxed with a short walk and local dinner.',
+            `🎭 Mood Note: Keep the mood route intact by emphasizing ${String(moodRoute || 'balanced exploration')}.`,
+            `💰 Estimated Day Cost: ₹${dayBudget.toLocaleString('en-IN')}`,
+            '💡 Recovery Tip: Protect one must-do experience and keep 60 mins of schedule buffer.',
+        ].join('\n');
+
+        return res.json({ dayNumber: normalizedDay, eventType: normalizedEvent, recoveredDay: fallback, fallback: true });
     }
 });
 
@@ -660,6 +1188,15 @@ router.get('/crowd/:destination', async (req, res) => {
             'January-February is the least crowded season',
         ],
     });
+});
+
+router.get('/crowd-windows/:city', async (req, res) => {
+    const city = String(req.params?.city || '').trim();
+    if (!city) {
+        return res.status(400).json({ error: 'city is required' });
+    }
+
+    return res.json(buildCrowdClimateWindows(city));
 });
 
 // ── USER DASHBOARD (SAVED TRIPS) ──
@@ -858,7 +1395,7 @@ router.post('/checkout', async (req, res) => {
 });
 
 // ── HELPERS ──
-function generateFallbackItinerary(destination, days, budget, purpose) {
+function generateFallbackItinerary(destination, days, budget, purpose, moodRoute = 'balanced', familyFriendly = false) {
     const dayBudget = Math.floor(budget / days);
     let itinerary = '';
     const activities = [
@@ -874,6 +1411,10 @@ function generateFallbackItinerary(destination, days, budget, purpose) {
         itinerary += `🌅 Morning: ${actSet[0]} Start early to enjoy the best weather.\n`;
         itinerary += `🌞 Afternoon: ${actSet[1]} Sample authentic local flavors for lunch.\n`;
         itinerary += `🌙 Evening: ${actSet[2]} Reflection at sunset and a relaxing local dinner.\n`;
+        itinerary += `🎭 Mood Note: This day follows a ${String(moodRoute || 'balanced')} route focus.\n`;
+        if (familyFriendly) {
+            itinerary += '👨‍👩‍👧 Family Adjustment: Keep transfers short and prefer low-step, accessible stops.\n';
+        }
         itinerary += `💰 Estimated Day Cost: ₹${dayBudget.toLocaleString('en-IN')}\n`;
         itinerary += `💡 Pro Tip: ${d % 2 === 0 ? 'Ask a local for their favorite hidden cafe.' : 'Bargain politely at markets for the best prices.'}\n\n`;
     }

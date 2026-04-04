@@ -60,6 +60,33 @@ CREATE TABLE IF NOT EXISTS user_trips (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- Budget Optimizer Profiles
+CREATE TABLE IF NOT EXISTS budget_optimizer_profiles (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    destination_name VARCHAR(100) NOT NULL,
+    mode VARCHAR(30) DEFAULT 'balanced',
+    days INT DEFAULT 1,
+    total_budget DECIMAL(12, 2) DEFAULT 0,
+    payload_json JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_user_destination (user_id, destination_name)
+);
+
+-- Travel Bookings (Hotel + Transport)
+CREATE TABLE IF NOT EXISTS travel_bookings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    booking_type VARCHAR(20) NOT NULL,
+    user_id INT NULL,
+    title VARCHAR(180) NOT NULL,
+    city VARCHAR(120) NOT NULL,
+    amount DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    details_json JSON,
+    status VARCHAR(20) NOT NULL DEFAULT 'CONFIRMED',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Initial Mock Data (Destinations)
 INSERT INTO destinations (name, state, description, attractions, best_time, travel_tips, nearby_places, category, image_url) VALUES
 ('Goa', 'Goa', 'Known for its beaches, ranging from popular stretches at Baga and Palolem to those in laid-back fishing villages.', 'Baga Beach, Calangute Beach, Basilica of Bom Jesus', 'November to February', 'Carry sunscreen and rent a scooter for exploring.', 'Gokarna, Hampi', 'Beach', 'https://images.unsplash.com/photo-1540518614846-7eded433c457'),

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { Eye, EyeOff } from 'lucide-react';
@@ -12,8 +12,34 @@ function ForgotPassword() {
     const [sent, setSent] = useState(false);
     const [loadingRequest, setLoadingRequest] = useState(false);
     const [loadingVerify, setLoadingVerify] = useState(false);
+    const [requestRetryAfterSeconds, setRequestRetryAfterSeconds] = useState(0);
+    const [verifyRetryAfterSeconds, setVerifyRetryAfterSeconds] = useState(0);
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
+
+    useEffect(() => {
+        if (!requestRetryAfterSeconds) {
+            return undefined;
+        }
+
+        const timer = setInterval(() => {
+            setRequestRetryAfterSeconds((prev) => (prev > 1 ? prev - 1 : 0));
+        }, 1000);
+
+        return () => clearInterval(timer);
+    }, [requestRetryAfterSeconds]);
+
+    useEffect(() => {
+        if (!verifyRetryAfterSeconds) {
+            return undefined;
+        }
+
+        const timer = setInterval(() => {
+            setVerifyRetryAfterSeconds((prev) => (prev > 1 ? prev - 1 : 0));
+        }, 1000);
+
+        return () => clearInterval(timer);
+    }, [verifyRetryAfterSeconds]);
 
     function normalizedEmail(value) {
         return value.trim().toLowerCase();
@@ -27,6 +53,10 @@ function ForgotPassword() {
         e.preventDefault();
         setError('');
         setMessage('');
+        if (requestRetryAfterSeconds > 0) {
+            setError(`Please wait ${requestRetryAfterSeconds}s before requesting another OTP.`);
+            return;
+        }
 
         const cleanEmail = normalizedEmail(email);
         if (!cleanEmail) {
@@ -39,11 +69,16 @@ function ForgotPassword() {
             const { data } = await axios.post('/api/auth/request-reset', { email: cleanEmail });
             setEmail(cleanEmail);
             setSent(true);
+            setRequestRetryAfterSeconds(0);
             setMessage(data.message || 'If an account exists, an OTP has been generated.');
             if (data.debugOtp) {
                 setMessage((prev) => `${prev} Dev OTP: ${data.debugOtp}`);
             }
         } catch (err) {
+            const nextRetry = Number(err?.response?.data?.retryAfterSeconds || 0);
+            if (nextRetry > 0) {
+                setRequestRetryAfterSeconds(nextRetry);
+            }
             setError(err?.response?.data?.error || 'Unable to send OTP');
         } finally {
             setLoadingRequest(false);
@@ -54,6 +89,11 @@ function ForgotPassword() {
         e.preventDefault();
         setError('');
         setMessage('');
+
+        if (verifyRetryAfterSeconds > 0) {
+            setError(`Please wait ${verifyRetryAfterSeconds}s before trying OTP verification again.`);
+            return;
+        }
 
         if (otp.trim().length !== 6) {
             setError('OTP must be exactly 6 digits.');
@@ -72,10 +112,15 @@ function ForgotPassword() {
                 otp: otp.trim(),
                 newPassword,
             });
+            setVerifyRetryAfterSeconds(0);
             setMessage(data.message || 'Password updated successfully. You can login now.');
             setOtp('');
             setNewPassword('');
         } catch (err) {
+            const nextRetry = Number(err?.response?.data?.retryAfterSeconds || 0);
+            if (nextRetry > 0) {
+                setVerifyRetryAfterSeconds(nextRetry);
+            }
             setError(err?.response?.data?.error || 'Reset failed');
         } finally {
             setLoadingVerify(false);
@@ -90,6 +135,12 @@ function ForgotPassword() {
 
                 {error && <p className="error">{error}</p>}
                 {message && <p className="success">{message}</p>}
+                {requestRetryAfterSeconds > 0 && (
+                    <p className="auth-tip">You can request another OTP in {requestRetryAfterSeconds}s.</p>
+                )}
+                {verifyRetryAfterSeconds > 0 && (
+                    <p className="auth-tip">You can retry OTP verification in {verifyRetryAfterSeconds}s.</p>
+                )}
 
                 {!sent ? (
                     <form onSubmit={requestOtp}>
@@ -103,7 +154,7 @@ function ForgotPassword() {
                                 required
                             />
                         </div>
-                        <button type="submit" className="button-primary w-full" disabled={loadingRequest}>
+                        <button type="submit" className="button-primary w-full" disabled={loadingRequest || requestRetryAfterSeconds > 0}>
                             {loadingRequest ? 'Sending...' : 'Send OTP'}
                         </button>
                     </form>
@@ -148,7 +199,7 @@ function ForgotPassword() {
                             </div>
                         </div>
                         <p className="auth-link-row">Use at least 8 characters, with letters and numbers.</p>
-                        <button type="submit" className="button-primary w-full" disabled={loadingVerify}>
+                        <button type="submit" className="button-primary w-full" disabled={loadingVerify || verifyRetryAfterSeconds > 0}>
                             {loadingVerify ? 'Updating...' : 'Verify OTP & Reset'}
                         </button>
                         <button type="button" className="button-secondary w-full" onClick={() => setSent(false)} disabled={loadingVerify}>

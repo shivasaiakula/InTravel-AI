@@ -67,3 +67,39 @@ Verify that the `/api/destinations` endpoint exists and returns a static or data
 - User can fetch destinations.
 - All endpoints must return proper status codes and JSON.
 </must_haves>
+
+## M1 Daily Execution Checklist
+
+Target milestone window: 2026-04-01 to 2026-04-05
+
+### Day 1 (2026-04-01) - Auth Contract Validation
+- [x] Confirm register flow: hash, create user, success payload.
+- [x] Confirm login flow: credential verification and JWT response.
+- [x] Confirm duplicate-email handling returns 400 with stable error shape.
+- [x] Record evidence in `.planning/REQUIREMENTS.md` verification tracker for AUTH-01 and AUTH-02.
+
+### Day 2 (2026-04-02) - AI Planner Contract Validation
+- [x] Validate `/api/ai/plan` input contract (destination, duration, budget).
+- [x] Validate itinerary response format is structured and day-by-day.
+- [x] Validate failure/fallback behavior when AI provider is unavailable.
+- [x] Record evidence for TRIP-01 and TRIP-02.
+
+### Day 3 (2026-04-03) - Destination Endpoint Validation
+- [x] Validate `/api/destinations` availability and payload shape.
+- [x] Validate frontend compatibility (required fields present).
+- [x] Record evidence for DEST-01.
+
+### Day 4 (2026-04-04) - Defect Sweep and Stabilization
+- [x] Resolve any P1/P2 defects found in auth/planner/destination paths.
+- [x] Re-run validations for all Phase 1 requirements.
+- [x] Update notes and blockers in verification tracker.
+
+### Day 5 (2026-04-05) - Milestone Gate
+- [x] Confirm AUTH-01, AUTH-02, TRIP-01, TRIP-02, DEST-01 are either Done or explicitly Blocked with reason.
+- [x] Prepare milestone summary with pass/fail outcome.
+- [x] Update `.planning/STATE.md` with M1 completion outcome.
+
+### Milestone Outcome (M1)
+- Result: Closed with external blocker.
+- Done: AUTH-01, AUTH-02, TRIP-01, DEST-01.
+- Blocked: TRIP-02 (Gemini 429 quota exhaustion in runtime; fallback itinerary path validated).

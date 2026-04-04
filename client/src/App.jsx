@@ -13,6 +13,7 @@ import Dashboard from './pages/Dashboard';
 import Budget from './pages/Budget';
 import Gamification from './pages/Gamification';
 import Packing from './pages/Packing';
+import Bookings from './pages/Bookings';
 import Chatbot from './components/Chatbot';
 
 const SIMPLE_THEME = 'minimal-light';
@@ -58,6 +59,7 @@ function App() {
         <Route path="/budget" element={<Budget />} />
         <Route path="/gamification" element={<Gamification />} />
         <Route path="/packing" element={<Packing />} />
+        <Route path="/bookings" element={<Bookings />} />
       </Routes>
       <Chatbot />
     </div>

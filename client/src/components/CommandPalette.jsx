@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Compass, Sparkles, BarChart3, Calendar, Map, Package, Trophy, Search } from 'lucide-react';
+import { Compass, Sparkles, BarChart3, Calendar, Map, Package, Trophy, Search, Plane, List } from 'lucide-react';
 import './CommandPalette.css';
 
 const RECENT_COMMANDS_KEY = 'intravel-recent-commands';
@@ -48,6 +48,20 @@ export default function CommandPalette({ isOpen, onClose }) {
                 hint: 'Build itinerary with AI',
                 icon: <Sparkles size={16} />,
                 run: () => navigate('/planner'),
+            },
+            {
+                id: 'go-transport',
+                label: 'Open Transport',
+                hint: 'Search and book transport tickets',
+                icon: <Plane size={16} />,
+                run: () => navigate('/transport'),
+            },
+            {
+                id: 'go-bookings',
+                label: 'Open My Bookings',
+                hint: 'View hotel and transport reservations',
+                icon: <List size={16} />,
+                run: () => navigate('/bookings'),
             },
             {
                 id: 'go-budget',

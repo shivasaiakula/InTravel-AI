@@ -9,19 +9,19 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.11.0",
-    "axios": "^1.6.8",
+    "@google/generative-ai": "^0.24.1",
+    "axios": "^1.14.0",
     "chart.js": "^4.5.1",
-    "framer-motion": "^11.1.7",
-    "lucide-react": "^0.378.0",
-    "react": "^18.3.1",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^1.7.0",
+    "react": "^19.2.4",
     "react-chartjs-2": "^5.3.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "^6.23.0",
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.13.2",
     "recharts": "^3.8.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.1",
-    "vite": "^5.2.11"
+    "@vitejs/plugin-react": "^6.0.1",
+    "vite": "^8.0.3"
   }
 }

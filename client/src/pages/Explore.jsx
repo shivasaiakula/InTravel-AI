@@ -1,8 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Search, MapPin, Calendar, Lightbulb, Info, Star, Filter, Users, TrendingUp, Cloud } from 'lucide-react';
+import { Search, MapPin, Calendar, Lightbulb, Info, Star, Heart, Users, TrendingUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import {
+  BEST_VALUE_WEIGHTS,
+  BEST_VALUE_FORMULA_HINT,
+  BEST_VALUE_FORMULA_TOOLTIP,
+  getMinMax,
+  scoreHigherBetter,
+  scoreLowerBetter,
+  weightedScore,
+} from '../utils/valueScore';
 import './Explore.css';
+
+function formatDateInput(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getDefaultHotelBookingForm() {
+  const checkInDate = new Date();
+  checkInDate.setDate(checkInDate.getDate() + 1);
+  const checkOutDate = new Date(checkInDate);
+  checkOutDate.setDate(checkOutDate.getDate() + 2);
+  return {
+    checkIn: formatDateInput(checkInDate),
+    checkOut: formatDateInput(checkOutDate),
+    rooms: 1,
+    guests: 2,
+  };
+}
 
 const CATEGORIES = ['All', 'Beach', 'Mountain', 'Heritage', 'Spiritual', 'Nature', 'Adventure'];
 
@@ -68,15 +97,57 @@ function getHotelImage(hotel, selectedDestination) {
   return HOTEL_CITY_IMAGE_MAP[cityKey] || placeholderImage(hotel?.name || cityKey || 'Hotel');
 }
 
+const DESTINATION_GUIDE = {
+  Goa: { idealDuration: '4-5 days', budget: 'Rs 3k-8k/day', vibe: 'Beach + Nightlife', bestFor: 'Couples, Groups', highlight: 'Sunset beaches and vibrant shacks', localTransport: 'Scooters and cabs' },
+  Manali: { idealDuration: '4-6 days', budget: 'Rs 2.5k-7k/day', vibe: 'Mountain + Adventure', bestFor: 'Couples, Trekkers', highlight: 'Snow valleys and river trails', localTransport: 'Taxis and bikes' },
+  Jaipur: { idealDuration: '3-4 days', budget: 'Rs 2k-6k/day', vibe: 'Heritage + Food', bestFor: 'Families, Culture lovers', highlight: 'Forts, bazaars, and palace routes', localTransport: 'Cabs and autos' },
+  Varanasi: { idealDuration: '2-3 days', budget: 'Rs 1.8k-5k/day', vibe: 'Spiritual + Culture', bestFor: 'Solo, Spiritual seekers', highlight: 'Ghat walks and evening aarti', localTransport: 'E-rickshaws and boats' },
+  Ladakh: { idealDuration: '6-8 days', budget: 'Rs 4k-10k/day', vibe: 'High-altitude Adventure', bestFor: 'Bikers, Adventure groups', highlight: 'Passes, monasteries, and lakes', localTransport: 'Rental bikes and cabs' },
+  Agra: { idealDuration: '2 days', budget: 'Rs 2k-5k/day', vibe: 'Heritage', bestFor: 'Families, Weekend trips', highlight: 'Taj Mahal sunrise circuit', localTransport: 'Cabs and autos' },
+  Darjeeling: { idealDuration: '3-4 days', budget: 'Rs 2.5k-6k/day', vibe: 'Mountain + Tea Trails', bestFor: 'Couples, Families', highlight: 'Toy train and tea estates', localTransport: 'Shared jeeps and cabs' },
+  Mysore: { idealDuration: '2-3 days', budget: 'Rs 1.8k-5k/day', vibe: 'Heritage + Relaxed', bestFor: 'Families, Culture trips', highlight: 'Palace lights and old markets', localTransport: 'Autos and cabs' },
+  'Andaman Islands': { idealDuration: '5-7 days', budget: 'Rs 4k-9k/day', vibe: 'Island + Water Activities', bestFor: 'Couples, Beach lovers', highlight: 'Coral beaches and ferry islands', localTransport: 'Ferries and cabs' },
+};
+
+function getDestinationGuide(dest) {
+  const key = dest?.name;
+  if (key && DESTINATION_GUIDE[key]) return DESTINATION_GUIDE[key];
+
+  return {
+    idealDuration: '3-5 days',
+    budget: 'Rs 2k-6k/day',
+    vibe: `${dest?.category || 'Leisure'} experience`,
+    bestFor: 'Families, Solo, Couples',
+    highlight: dest?.attractions || 'Top local experiences and signature viewpoints',
+    localTransport: 'Cabs, autos, and local transit',
+  };
+}
+
 export default function Explore() {
   const [destinations, setDestinations] = useState([]);
   const [selected, setSelected] = useState(null);
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
+  const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
   const [weather, setWeather] = useState(null);
   const [hotels, setHotels] = useState([]);
   const [reviews, setReviews] = useState([]);
+  const [reviewDraft, setReviewDraft] = useState({ rating: 5, comment: '' });
+  const [reviewState, setReviewState] = useState({ submitting: false, error: '', success: '' });
+  const [hotelBookingForm, setHotelBookingForm] = useState(() => getDefaultHotelBookingForm());
+  const [hotelBookingState, setHotelBookingState] = useState({ bookingHotel: '', success: '', error: '' });
+  const [showCheapestHotelsOnly, setShowCheapestHotelsOnly] = useState(false);
+  const [hotelSortBy, setHotelSortBy] = useState('best-value');
   const [crowd, setCrowd] = useState(null);
+  const [crowdWindows, setCrowdWindows] = useState(null);
+  const [favoriteIds, setFavoriteIds] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('travel_favorites') || '[]');
+      return Array.isArray(stored) ? stored : [];
+    } catch {
+      return [];
+    }
+  });
   const [loading, setLoading] = useState(true);
   const [skeletons] = useState([1, 2, 3, 4, 5, 6]);
 
@@ -87,9 +158,28 @@ export default function Explore() {
       fetchWeather(selected.name);
       fetchHotels(selected.name);
       fetchCrowd(selected.name);
+      fetchCrowdWindows(selected.name);
       fetchReviews(selected.name);
+      setReviewDraft({ rating: 5, comment: '' });
+      setReviewState({ submitting: false, error: '', success: '' });
+      setHotelBookingForm(getDefaultHotelBookingForm());
+      setHotelBookingState({ bookingHotel: '', success: '', error: '' });
+      setShowCheapestHotelsOnly(false);
+      setHotelSortBy('best-value');
     }
   }, [selected]);
+
+  const user = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || 'null');
+    } catch {
+      return null;
+    }
+  })();
+
+  useEffect(() => {
+    localStorage.setItem('travel_favorites', JSON.stringify(favoriteIds));
+  }, [favoriteIds]);
 
   const fetchDestinations = async () => {
     try {
@@ -124,6 +214,24 @@ export default function Explore() {
     }
   };
 
+  const fetchCrowdWindows = async (city) => {
+    setCrowdWindows(null);
+    try {
+      const { data } = await axios.get(`/api/crowd-windows/${city}`);
+      setCrowdWindows(data);
+    } catch {
+      setCrowdWindows({
+        city,
+        windows: [
+          { key: 'morning', label: '6:00 AM - 9:00 AM', crowdLevel: 'Low', climateHint: 'pleasant breeze', confidence: 68, recommendation: 'Good for top landmarks.', isBestNow: true },
+          { key: 'late-morning', label: '9:00 AM - 12:00 PM', crowdLevel: 'Moderate', climateHint: 'warming up', confidence: 64, recommendation: 'Prefer indoor museums.' },
+          { key: 'afternoon', label: '12:00 PM - 3:00 PM', crowdLevel: 'High', climateHint: 'heat and traffic', confidence: 61, recommendation: 'Plan cafe breaks.' },
+        ],
+        confidenceState: 'low',
+      });
+    }
+  };
+
   const fetchHotels = async (city) => {
     try {
       const { data } = await axios.get(`/api/hotels?city=${city}`);
@@ -138,13 +246,171 @@ export default function Explore() {
     } catch (err) { console.error(err); }
   };
 
+  const submitReview = async (event) => {
+    event.preventDefault();
+    if (!selected || !reviewDraft.comment.trim()) {
+      setReviewState({ submitting: false, error: 'Please add a short review before submitting.', success: '' });
+      return;
+    }
+
+    let userId = null;
+    try {
+      const parsed = JSON.parse(localStorage.getItem('user') || 'null');
+      userId = parsed?.id || null;
+    } catch {
+      userId = null;
+    }
+
+    setReviewState({ submitting: true, error: '', success: '' });
+
+    try {
+      await axios.post('/api/reviews', {
+        userId,
+        city: selected.name,
+        rating: Number(reviewDraft.rating),
+        comment: reviewDraft.comment.trim(),
+      });
+
+      setReviewDraft({ rating: 5, comment: '' });
+      setReviewState({ submitting: false, error: '', success: 'Review submitted successfully.' });
+      fetchReviews(selected.name);
+    } catch (err) {
+      const errorMsg = err?.response?.data?.error || 'Could not submit review right now.';
+      setReviewState({ submitting: false, error: errorMsg, success: '' });
+    }
+  };
+
+  const handleBookHotel = async (hotel) => {
+    if (!selected) return;
+
+    const checkIn = new Date(hotelBookingForm.checkIn);
+    const checkOut = new Date(hotelBookingForm.checkOut);
+    const nights = Math.round((checkOut.getTime() - checkIn.getTime()) / (24 * 60 * 60 * 1000));
+
+    if (!hotelBookingForm.checkIn || !hotelBookingForm.checkOut || nights < 1) {
+      setHotelBookingState({ bookingHotel: '', success: '', error: 'Select valid check-in and check-out dates.' });
+      return;
+    }
+
+    const rooms = Math.max(1, Number(hotelBookingForm.rooms) || 1);
+    const guests = Math.max(1, Number(hotelBookingForm.guests) || 1);
+    const pricePerNight = Number(hotel?.price_per_night) || 0;
+    const amount = pricePerNight * nights * rooms;
+
+    setHotelBookingState({ bookingHotel: hotel.name, success: '', error: '' });
+
+    try {
+      const { data } = await axios.post('/api/bookings', {
+        type: 'hotel',
+        userId: user?.id || null,
+        title: `${hotel.name} stay in ${selected.name}`,
+        city: selected.name,
+        amount,
+        details: {
+          hotel: hotel.name,
+          checkIn: hotelBookingForm.checkIn,
+          checkOut: hotelBookingForm.checkOut,
+          nights,
+          rooms,
+          guests,
+          pricePerNight,
+          rating: hotel.rating,
+        },
+      });
+
+      setHotelBookingState({
+        bookingHotel: '',
+        success: `Hotel booked successfully. Booking ID: #${data?.id}`,
+        error: '',
+      });
+    } catch (err) {
+      setHotelBookingState({
+        bookingHotel: '',
+        success: '',
+        error: err?.response?.data?.error || 'Unable to complete hotel booking right now.',
+      });
+    }
+  };
+
   const filtered = destinations.filter(d => {
     const matchSearch = d.name.toLowerCase().includes(search.toLowerCase()) ||
       d.category.toLowerCase().includes(search.toLowerCase()) ||
       d.state.toLowerCase().includes(search.toLowerCase());
     const matchCat = activeCategory === 'All' || d.category === activeCategory;
-    return matchSearch && matchCat;
+    const matchFavorite = !showOnlyFavorites || favoriteIds.includes(d.id);
+    return matchSearch && matchCat && matchFavorite;
   });
+
+  const favoriteDestinations = destinations.filter((d) => favoriteIds.includes(d.id));
+
+  const parseAmenitiesCount = (amenities) => {
+    if (!amenities) return 0;
+    return String(amenities)
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .length;
+  };
+
+  const hotelPrices = hotels.map((hotel) => Number(hotel?.price_per_night) || 0);
+  const hotelRatings = hotels.map((hotel) => Number(hotel?.rating) || 0);
+  const hotelAmenitiesCount = hotels.map((hotel) => parseAmenitiesCount(hotel?.amenities));
+
+  const { min: minHotelPrice, max: maxHotelPrice } = getMinMax(hotelPrices);
+  const { min: minHotelRating, max: maxHotelRating } = getMinMax(hotelRatings);
+  const { min: minHotelAmenities, max: maxHotelAmenities } = getMinMax(hotelAmenitiesCount);
+
+  const hotelsWithScore = hotels.map((hotel) => {
+    const price = Number(hotel?.price_per_night) || 0;
+    const rating = Number(hotel?.rating) || 0;
+    const amenityCount = parseAmenitiesCount(hotel?.amenities);
+
+    const priceScore = scoreLowerBetter(price, minHotelPrice, maxHotelPrice);
+    const ratingScore = scoreHigherBetter(rating, minHotelRating, maxHotelRating);
+    const amenitiesScore = scoreHigherBetter(amenityCount, minHotelAmenities, maxHotelAmenities);
+
+    const bestValueScore = weightedScore([
+      { score: priceScore, weight: BEST_VALUE_WEIGHTS.price },
+      { score: ratingScore, weight: BEST_VALUE_WEIGHTS.quality },
+      { score: amenitiesScore, weight: BEST_VALUE_WEIGHTS.convenience },
+    ]);
+
+    return {
+      ...hotel,
+      amenityCount,
+      bestValueScore,
+    };
+  });
+
+  const sortedHotels = [...hotelsWithScore].sort((a, b) => {
+    if (hotelSortBy === 'price') {
+      return (Number(a?.price_per_night) || 0) - (Number(b?.price_per_night) || 0);
+    }
+    if (hotelSortBy === 'rating') {
+      return (Number(b?.rating) || 0) - (Number(a?.rating) || 0);
+    }
+    return (Number(b?.bestValueScore) || 0) - (Number(a?.bestValueScore) || 0);
+  });
+
+  const cheapestHotelNightPrice = hotelsWithScore.length > 0
+    ? Math.min(...hotelsWithScore.map((hotel) => Number(hotel?.price_per_night) || 0))
+    : 0;
+
+  const bestValueHotel = hotelsWithScore.length > 0
+    ? [...hotelsWithScore].sort((a, b) => (Number(b?.bestValueScore) || 0) - (Number(a?.bestValueScore) || 0))[0]
+    : null;
+
+  const visibleHotels = showCheapestHotelsOnly
+    ? sortedHotels.filter((hotel) => (Number(hotel?.price_per_night) || 0) === cheapestHotelNightPrice)
+    : sortedHotels;
+
+  const toggleFavorite = (destinationId) => {
+    setFavoriteIds((prev) => (
+      prev.includes(destinationId)
+        ? prev.filter((id) => id !== destinationId)
+        : [...prev, destinationId]
+    ));
+  };
 
   const crowdColor = { Low: '#10b981', Moderate: '#f59e0b', High: '#f97316', 'Very High': '#f43f5e' };
 
@@ -170,7 +436,27 @@ export default function Explore() {
               {cat}
             </button>
           ))}
+          <button
+            className={`chip ${showOnlyFavorites ? 'active' : ''}`}
+            onClick={() => setShowOnlyFavorites((prev) => !prev)}
+          >
+            Saved only
+          </button>
         </div>
+        {favoriteDestinations.length > 0 && (
+          <div className="favorites-strip">
+            <span className="favorites-label"><Heart size={14} /> Saved</span>
+            {favoriteDestinations.slice(0, 6).map((destination) => (
+              <button
+                key={destination.id}
+                className="favorite-chip"
+                onClick={() => setSelected(destination)}
+              >
+                {destination.name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Destination Grid */}
@@ -191,27 +477,50 @@ export default function Explore() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.06 }}
             >
-              <div className="dest-img-container">
-                <img
-                  src={getDestinationImage(dest)}
-                  alt={dest.name}
-                  loading="lazy"
-                  onError={(e) => {
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.src = placeholderImage(dest.name);
-                  }}
-                />
-                <div className="dest-category">{dest.category}</div>
-                <div className="dest-overlay" />
-              </div>
-              <div className="dest-info">
-                <h3>{dest.name}</h3>
-                <p><MapPin size={13} /> {dest.state}</p>
-                <div className="dest-meta">
-                  <span><Calendar size={12} /> {dest.best_time}</span>
-                  <span className="dest-rating">⭐ 4.{Math.floor(Math.random() * 3) + 6}</span>
-                </div>
-              </div>
+              {(() => {
+                const guide = getDestinationGuide(dest);
+                return (
+                  <>
+                    <div className="dest-img-container">
+                      <button
+                        type="button"
+                        className={`favorite-btn ${favoriteIds.includes(dest.id) ? 'active' : ''}`}
+                        aria-label={favoriteIds.includes(dest.id) ? 'Remove from favorites' : 'Add to favorites'}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleFavorite(dest.id);
+                        }}
+                      >
+                        <Heart size={15} />
+                      </button>
+                      <img
+                        src={getDestinationImage(dest)}
+                        alt={dest.name}
+                        loading="lazy"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = placeholderImage(dest.name);
+                        }}
+                      />
+                      <div className="dest-category">{dest.category}</div>
+                      <div className="dest-overlay" />
+                    </div>
+                    <div className="dest-info">
+                      <h3>{dest.name}</h3>
+                      <p><MapPin size={13} /> {dest.state}</p>
+                      <div className="dest-meta">
+                        <span><Calendar size={12} /> {dest.best_time}</span>
+                        <span className="dest-rating">⭐ 4.{Math.floor(Math.random() * 3) + 6}</span>
+                      </div>
+                      <div className="dest-facts">
+                        <span>{guide.idealDuration}</span>
+                        <span>{guide.budget}</span>
+                      </div>
+                      <p className="dest-highlight">{guide.highlight}</p>
+                    </div>
+                  </>
+                );
+              })()}
             </motion.div>
           ))
         ) : (
@@ -226,183 +535,351 @@ export default function Explore() {
       {/* Destination Modal */}
       <AnimatePresence>
         {selected && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="modal-overlay"
-            onClick={() => setSelected(null)}
-          >
-            <motion.div
-              layoutId={`dest-${selected.id}`}
-              className="modal-content glass-card"
-              onClick={e => e.stopPropagation()}
-              initial={{ scale: 0.9 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.9 }}
-            >
-              <button className="close-btn" onClick={() => setSelected(null)}>×</button>
+          (() => {
+            const guide = getDestinationGuide(selected);
+            return (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="modal-overlay"
+                onClick={() => setSelected(null)}
+              >
+                <motion.div
+                  layoutId={`dest-${selected.id}`}
+                  className="modal-content glass-card"
+                  onClick={e => e.stopPropagation()}
+                  initial={{ scale: 0.9 }}
+                  animate={{ scale: 1 }}
+                  exit={{ scale: 0.9 }}
+                >
+                  <button className="close-btn" onClick={() => setSelected(null)}>×</button>
 
-              {/* Modal Header Image */}
-              <div className="modal-header">
-                <img
-                  src={getDestinationImage(selected)}
-                  alt={selected.name}
-                  onError={(e) => {
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.src = placeholderImage(selected.name);
-                  }}
-                />
-                <div className="header-info">
-                  <h2>{selected.name}</h2>
-                  <p className="state-name"><MapPin size={16} /> {selected.state}</p>
-                  <div className="header-meta">
-                    <span className="badge">{selected.category}</span>
-                    {weather && (
-                      <div className="weather-badge">
-                        {weather.temp}°C • {weather.condition} • 💧{weather.humidity}%
+                  {/* Modal Header Image */}
+                  <div className="modal-header">
+                    <img
+                      src={getDestinationImage(selected)}
+                      alt={selected.name}
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = placeholderImage(selected.name);
+                      }}
+                    />
+                    <div className="header-info">
+                      <h2>{selected.name}</h2>
+                      <button
+                        type="button"
+                        className={`favorite-btn modal-favorite-btn ${favoriteIds.includes(selected.id) ? 'active' : ''}`}
+                        onClick={() => toggleFavorite(selected.id)}
+                      >
+                        <Heart size={15} /> {favoriteIds.includes(selected.id) ? 'Saved' : 'Save'}
+                      </button>
+                      <p className="state-name"><MapPin size={16} /> {selected.state}</p>
+                      <div className="header-meta">
+                        <span className="badge">{selected.category}</span>
+                        {weather && (
+                          <div className="weather-badge">
+                            {weather.temp}°C • {weather.condition} • 💧{weather.humidity}%
+                          </div>
+                        )}
+                        {crowd && (
+                          <div className="crowd-badge" style={{ background: `${crowdColor[crowd.currentCrowd]}20`, border: `1px solid ${crowdColor[crowd.currentCrowd]}50`, color: crowdColor[crowd.currentCrowd] }}>
+                            <Users size={12} /> {crowd.currentCrowd} Crowd
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
+                  </div>
+
+                  {/* Modal Body */}
+                  <div className="modal-body">
+                    {/* Description + Map */}
+                    <div className="info-section">
+                      <div className="section-title-row">
+                        <h4><Info size={18} /> About {selected.name}</h4>
+                      </div>
+                      <p>{selected.description}</p>
+                      <div className="quick-facts-grid">
+                        <div className="quick-fact"><span>Ideal Duration</span><strong>{guide.idealDuration}</strong></div>
+                        <div className="quick-fact"><span>Budget</span><strong>{guide.budget}</strong></div>
+                        <div className="quick-fact"><span>Vibe</span><strong>{guide.vibe}</strong></div>
+                        <div className="quick-fact"><span>Best For</span><strong>{guide.bestFor}</strong></div>
+                        <div className="quick-fact"><span>Highlight</span><strong>{guide.highlight}</strong></div>
+                        <div className="quick-fact"><span>Local Transport</span><strong>{guide.localTransport}</strong></div>
+                      </div>
+                      <div className="map-embed" style={{ marginTop: '1.5rem', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <iframe
+                          title="Google Maps Location"
+                          width="100%"
+                          height="250"
+                          style={{ border: 0, filter: 'grayscale(100%) invert(90%) contrast(80%)' }}
+                          loading="lazy"
+                          allowFullScreen
+                          src={`https://www.google.com/maps?q=${encodeURIComponent(selected.name + ' ' + selected.state)}&output=embed`}
+                        ></iframe>
+                      </div>
+                    </div>
+
+                    {/* Info Grid */}
+                    <div className="info-grid">
+                      <div className="info-item">
+                        <h4><Star size={16} /> Top Attractions</h4>
+                        <p>{selected.attractions}</p>
+                      </div>
+                      <div className="info-item">
+                        <h4><Calendar size={16} /> Best Time to Visit</h4>
+                        <p>{selected.best_time}</p>
+                      </div>
+                      <div className="info-item">
+                        <h4><Lightbulb size={16} /> Travel Tips</h4>
+                        <p>{selected.travel_tips || 'Book in advance during peak season. Carry cash for local markets.'}</p>
+                      </div>
+                      <div className="info-item">
+                        <h4><MapPin size={16} /> Nearby Places</h4>
+                        <p>{selected.nearby_places || 'Ask locals for their favorite hidden spots!'}</p>
+                      </div>
+                    </div>
+
+                    {/* Crowd Info */}
                     {crowd && (
-                      <div className="crowd-badge" style={{ background: `${crowdColor[crowd.currentCrowd]}20`, border: `1px solid ${crowdColor[crowd.currentCrowd]}50`, color: crowdColor[crowd.currentCrowd] }}>
-                        <Users size={12} /> {crowd.currentCrowd} Crowd
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Modal Body */}
-              <div className="modal-body">
-                {/* Description + Map */}
-                <div className="info-section">
-                  <div className="section-title-row">
-                    <h4><Info size={18} /> About {selected.name}</h4>
-                  </div>
-                  <p>{selected.description}</p>
-                  <div className="map-embed" style={{ marginTop: '1.5rem', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <iframe
-                      title="Google Maps Location"
-                      width="100%"
-                      height="250"
-                      style={{ border: 0, filter: 'grayscale(100%) invert(90%) contrast(80%)' }}
-                      loading="lazy"
-                      allowFullScreen
-                      src={`https://www.google.com/maps?q=${encodeURIComponent(selected.name + ' ' + selected.state)}&output=embed`}
-                    ></iframe>
-                  </div>
-                </div>
-
-                {/* Info Grid */}
-                <div className="info-grid">
-                  <div className="info-item">
-                    <h4><Star size={16} /> Top Attractions</h4>
-                    <p>{selected.attractions}</p>
-                  </div>
-                  <div className="info-item">
-                    <h4><Calendar size={16} /> Best Time to Visit</h4>
-                    <p>{selected.best_time}</p>
-                  </div>
-                  <div className="info-item">
-                    <h4><Lightbulb size={16} /> Travel Tips</h4>
-                    <p>{selected.travel_tips || 'Book in advance during peak season. Carry cash for local markets.'}</p>
-                  </div>
-                  <div className="info-item">
-                    <h4><MapPin size={16} /> Nearby Places</h4>
-                    <p>{selected.nearby_places || 'Ask locals for their favorite hidden spots!'}</p>
-                  </div>
-                </div>
-
-                {/* Crowd Info */}
-                {crowd && (
-                  <div className="crowd-section info-section">
-                    <h4><TrendingUp size={18} /> Live Crowd & Trend</h4>
-                    <div className="crowd-grid">
-                      <div className="crowd-card glass-card-sm">
-                        <div className="crowd-label">Current Crowd</div>
-                        <div className="crowd-val" style={{ color: crowdColor[crowd.currentCrowd] }}>{crowd.currentCrowd}</div>
-                        <div className="progress-bar-container">
-                          <div className="progress-bar-fill" style={{ width: `${crowd.percentage}%`, background: crowdColor[crowd.currentCrowd] }} />
-                        </div>
-                        <div className="crowd-pct">{crowd.percentage}% capacity</div>
-                      </div>
-                      <div className="crowd-card glass-card-sm">
-                        <div className="crowd-label">Best Time</div>
-                        <div className="crowd-val" style={{ color: '#10b981' }}>{crowd.bestTimeToVisit}</div>
-                        <div className="crowd-tip">Visit early morning for the best experience!</div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Local Cuisine & Hidden Gems */}
-                <div className="info-section cuisine-section">
-                  <h4>🍲 Local Cuisine & Hidden Gems</h4>
-                  <div className="cuisine-grid">
-                    <div className="cuisine-card glass-card">
-                      <h5>Must Eat</h5>
-                      <p>Regional delicacies, legendary street food, and authentic flavors that define {selected.name}. Look for local dhabas and market stalls.</p>
-                    </div>
-                    <div className="cuisine-card glass-card">
-                      <h5>Hidden Gem</h5>
-                      <p>Offbeat spots, secret cafes, and quiet viewpoints known only to the locals of {selected.state}. Ask your autorickshaw driver!</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Hotels */}
-                <div className="info-section hotel-section">
-                  <h4>🏨 Where to Stay in {selected.name}</h4>
-                  <div className="hotel-list">
-                    {hotels.length > 0 ? (
-                      hotels.map((h, i) => (
-                        <div key={i} className="hotel-card glass-card">
-                          <img
-                            src={getHotelImage(h, selected)}
-                            alt={h.name}
-                            onError={(e) => {
-                              e.currentTarget.onerror = null;
-                              e.currentTarget.src = HOTEL_CITY_IMAGE_MAP[h.city || selected?.name] || placeholderImage(h.name);
-                            }}
-                          />
-                          <div className="hotel-info">
-                            <h5>{h.name}</h5>
-                            <p>⭐ {h.rating} • <strong>₹{h.price_per_night?.toLocaleString('en-IN')}/night</strong></p>
-                            <p className="amenities">{h.amenities}</p>
+                      <div className="crowd-section info-section">
+                        <h4><TrendingUp size={18} /> Live Crowd & Trend</h4>
+                        <div className="crowd-grid">
+                          <div className="crowd-card glass-card-sm">
+                            <div className="crowd-label">Current Crowd</div>
+                            <div className="crowd-val" style={{ color: crowdColor[crowd.currentCrowd] }}>{crowd.currentCrowd}</div>
+                            <div className="progress-bar-container">
+                              <div className="progress-bar-fill" style={{ width: `${crowd.percentage}%`, background: crowdColor[crowd.currentCrowd] }} />
+                            </div>
+                            <div className="crowd-pct">{crowd.percentage}% capacity</div>
+                          </div>
+                          <div className="crowd-card glass-card-sm">
+                            <div className="crowd-label">Best Time</div>
+                            <div className="crowd-val" style={{ color: '#10b981' }}>{crowd.bestTimeToVisit}</div>
+                            <div className="crowd-tip">Visit early morning for the best experience!</div>
                           </div>
                         </div>
-                      ))
-                    ) : (
-                      <p style={{ color: 'var(--text-muted)' }}>Loading hotels for {selected.name}...</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Community Reviews */}
-                <div className="info-section review-section" style={{ marginTop: '2rem' }}>
-                  <h4>💬 Traveler Reviews</h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
-                    {reviews.length > 0 ? reviews.map((r, i) => (
-                      <div key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '0.8rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
-                          <span style={{ fontWeight: 600 }}>{r.user_name}</span>
-                          <span style={{ color: 'var(--accent-amber)', fontSize: '0.85rem' }}>{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
-                        </div>
-                        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{r.comment}</p>
                       </div>
-                    )) : <p style={{ color: 'var(--text-muted)' }}>No reviews yet. Be the first to visit!</p>}
-                  </div>
-                </div>
+                    )}
 
-                {/* CTA */}
-                <div className="modal-cta">
-                  <a href={`/planner?destination=${encodeURIComponent(selected.name)}`} className="button-primary">
-                    ✨ Plan a Trip to {selected.name}
-                  </a>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
+                    {crowdWindows?.windows?.length > 0 && (
+                      <div className="info-section crowd-window-section">
+                        <h4><TrendingUp size={18} /> Crowd + Climate Windows</h4>
+                        <div className="crowd-window-grid">
+                          {crowdWindows.windows.map((window) => (
+                            <div key={window.key || window.label} className={`crowd-window-card glass-card-sm ${window.isBestNow ? 'best-now' : ''}`}>
+                              <div className="crowd-window-top">
+                                <strong>{window.label}</strong>
+                                {window.isBestNow && <span className="crowd-window-badge">Best now</span>}
+                              </div>
+                              <p className="crowd-window-meta">Crowd: {window.crowdLevel} • Climate: {window.climateHint}</p>
+                              <p className="crowd-window-rec">{window.recommendation}</p>
+                              <p className="crowd-window-conf">
+                                Confidence: {window.confidence}%
+                                {window.confidence < 70 && ' (low confidence - verify locally)'}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Local Cuisine & Hidden Gems */}
+                    <div className="info-section cuisine-section">
+                      <h4>🍲 Local Cuisine & Hidden Gems</h4>
+                      <div className="cuisine-grid">
+                        <div className="cuisine-card glass-card">
+                          <h5>Must Eat</h5>
+                          <p>Regional delicacies, legendary street food, and authentic flavors that define {selected.name}. Look for local dhabas and market stalls.</p>
+                        </div>
+                        <div className="cuisine-card glass-card">
+                          <h5>Hidden Gem</h5>
+                          <p>Offbeat spots, secret cafes, and quiet viewpoints known only to the locals of {selected.state}. Ask your autorickshaw driver!</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Hotels */}
+                    <div className="info-section hotel-section">
+                      <h4>🏨 Where to Stay in {selected.name}</h4>
+                      {hotels.length > 0 && (
+                        <div className="hotel-compare-head">
+                          <div>
+                            <p className="hotel-compare-summary">Cheapest available: <strong>₹{cheapestHotelNightPrice.toLocaleString('en-IN')}</strong> / night</p>
+                            {bestValueHotel && (
+                              <p className="hotel-best-value-summary">
+                                Best value: <strong>{bestValueHotel.bestValueScore}/100</strong> ({bestValueHotel.name})
+                                <span className="hotel-best-value-help" title={BEST_VALUE_FORMULA_TOOLTIP}>How it is scored: {BEST_VALUE_FORMULA_HINT}</span>
+                              </p>
+                            )}
+                          </div>
+                          <div className="hotel-compare-actions">
+                            <select
+                              className="hotel-sort-select"
+                              value={hotelSortBy}
+                              onChange={(e) => setHotelSortBy(e.target.value)}
+                            >
+                              <option value="best-value">Best value</option>
+                              <option value="price">Lowest price</option>
+                              <option value="rating">Highest rating</option>
+                            </select>
+                            <button
+                              type="button"
+                              className={`chip hotel-compare-chip ${showCheapestHotelsOnly ? 'active' : ''}`}
+                              onClick={() => setShowCheapestHotelsOnly((prev) => !prev)}
+                            >
+                              {showCheapestHotelsOnly ? 'Showing cheapest only' : 'Show only cheapest'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      <div className="hotel-booking-form glass-card-sm">
+                        <div className="hotel-booking-grid">
+                          <div className="hotel-booking-field">
+                            <label htmlFor="hotel-check-in">Check-in</label>
+                            <input
+                              id="hotel-check-in"
+                              type="date"
+                              min={formatDateInput(new Date())}
+                              value={hotelBookingForm.checkIn}
+                              onChange={(e) => setHotelBookingForm((prev) => ({ ...prev, checkIn: e.target.value }))}
+                            />
+                          </div>
+                          <div className="hotel-booking-field">
+                            <label htmlFor="hotel-check-out">Check-out</label>
+                            <input
+                              id="hotel-check-out"
+                              type="date"
+                              min={hotelBookingForm.checkIn || formatDateInput(new Date())}
+                              value={hotelBookingForm.checkOut}
+                              onChange={(e) => setHotelBookingForm((prev) => ({ ...prev, checkOut: e.target.value }))}
+                            />
+                          </div>
+                          <div className="hotel-booking-field">
+                            <label htmlFor="hotel-rooms">Rooms</label>
+                            <input
+                              id="hotel-rooms"
+                              type="number"
+                              min="1"
+                              max="6"
+                              value={hotelBookingForm.rooms}
+                              onChange={(e) => setHotelBookingForm((prev) => ({ ...prev, rooms: Math.max(1, Math.min(6, Number(e.target.value) || 1)) }))}
+                            />
+                          </div>
+                          <div className="hotel-booking-field">
+                            <label htmlFor="hotel-guests">Guests</label>
+                            <input
+                              id="hotel-guests"
+                              type="number"
+                              min="1"
+                              max="12"
+                              value={hotelBookingForm.guests}
+                              onChange={(e) => setHotelBookingForm((prev) => ({ ...prev, guests: Math.max(1, Math.min(12, Number(e.target.value) || 1)) }))}
+                            />
+                          </div>
+                        </div>
+                        {hotelBookingState.success && <p className="hotel-booking-success">{hotelBookingState.success}</p>}
+                        {hotelBookingState.error && <p className="hotel-booking-error">{hotelBookingState.error}</p>}
+                      </div>
+
+                      <div className="hotel-list">
+                        {visibleHotels.length > 0 ? (
+                          visibleHotels.map((h, i) => (
+                            <div key={i} className="hotel-card glass-card">
+                              <img
+                                src={getHotelImage(h, selected)}
+                                alt={h.name}
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null;
+                                  e.currentTarget.src = HOTEL_CITY_IMAGE_MAP[h.city || selected?.name] || placeholderImage(h.name);
+                                }}
+                              />
+                              <div className="hotel-info">
+                                <h5>{h.name}</h5>
+                                <p>⭐ {h.rating} • <strong>₹{h.price_per_night?.toLocaleString('en-IN')}/night</strong></p>
+                                {bestValueHotel && h.name === bestValueHotel.name && (
+                                  <span className="hotel-best-value-chip">Best value {h.bestValueScore}/100</span>
+                                )}
+                                {(Number(h?.price_per_night) || 0) === cheapestHotelNightPrice ? (
+                                  <span className="hotel-cheapest-chip">Cheapest</span>
+                                ) : (
+                                  <p className="hotel-price-delta">+₹{((Number(h?.price_per_night) || 0) - cheapestHotelNightPrice).toLocaleString('en-IN')} vs cheapest</p>
+                                )}
+                                <p className="amenities">{h.amenities}</p>
+                                <button
+                                  type="button"
+                                  className="button-secondary btn-sm hotel-book-btn"
+                                  onClick={() => handleBookHotel(h)}
+                                  disabled={hotelBookingState.bookingHotel === h.name}
+                                >
+                                  {hotelBookingState.bookingHotel === h.name ? 'Booking...' : 'Book Hotel'}
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p style={{ color: 'var(--text-muted)' }}>{hotels.length === 0 ? `Loading hotels for ${selected.name}...` : 'No hotels match the cheapest filter.'}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Community Reviews */}
+                    <div className="info-section review-section" style={{ marginTop: '2rem' }}>
+                      <h4>💬 Traveler Reviews</h4>
+                      <form className="review-form" onSubmit={submitReview}>
+                        <div className="review-form-row">
+                          <label htmlFor="review-rating">Rating</label>
+                          <select
+                            id="review-rating"
+                            value={reviewDraft.rating}
+                            onChange={(e) => setReviewDraft((prev) => ({ ...prev, rating: Number(e.target.value) }))}
+                          >
+                            {[5, 4, 3, 2, 1].map((star) => (
+                              <option key={star} value={star}>{`${star} star${star === 1 ? '' : 's'}`}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <textarea
+                          rows={3}
+                          maxLength={240}
+                          placeholder={`Share your experience in ${selected.name}...`}
+                          value={reviewDraft.comment}
+                          onChange={(e) => setReviewDraft((prev) => ({ ...prev, comment: e.target.value }))}
+                        />
+                        <div className="review-form-actions">
+                          <span className="review-char-count">{reviewDraft.comment.length}/240</span>
+                          <button className="button-secondary btn-sm" type="submit" disabled={reviewState.submitting}>
+                            {reviewState.submitting ? 'Submitting...' : 'Submit Review'}
+                          </button>
+                        </div>
+                        {reviewState.error && <p className="review-error">{reviewState.error}</p>}
+                        {reviewState.success && <p className="review-success">{reviewState.success}</p>}
+                      </form>
+
+                      <div className="review-list">
+                        {reviews.length > 0 ? reviews.map((r, i) => (
+                          <div key={i} className="review-item">
+                            <div className="review-head">
+                              <span className="review-user">{r.user_name || 'Traveler'}</span>
+                              <span className="review-stars">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
+                            </div>
+                            <p className="review-comment">{r.comment}</p>
+                          </div>
+                        )) : <p className="review-empty">No reviews yet. Be the first to visit!</p>}
+                      </div>
+                    </div>
+
+                    {/* CTA */}
+                    <div className="modal-cta">
+                      <a href={`/planner?destination=${encodeURIComponent(selected.name)}`} className="button-primary">
+                        ✨ Plan a Trip to {selected.name}
+                      </a>
+                    </div>
+                  </div>
+                </motion.div>
+              </motion.div>
+            );
+          })()
         )}
       </AnimatePresence>
     </div>

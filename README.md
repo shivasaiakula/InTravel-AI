@@ -97,6 +97,33 @@ npm.cmd run smoke:auth
 
 If backend is in production mode and does not return `debugOtp`, configure SMTP env vars and verify the reset step using your mailbox OTP.
 
+### 7. Bookings API Smoke Test
+Start the backend, then run:
+```bash
+cd server
+npm.cmd run smoke:bookings
+```
+
+This validates the hotel and transport booking flow end-to-end:
+- create booking
+- list bookings
+- filter bookings by type
+- cancel booking
+- verify cancelled status
+
+### 8. Troubleshooting (DB Unavailable Fallback Mode)
+If MySQL is not reachable or DB credentials are missing, the backend automatically falls back to in-memory local mode for supported flows.
+
+What this means:
+- auth and booking APIs can still work for local testing
+- data is not persisted after server restart
+- smoke tests can still pass in fallback mode
+
+How to confirm DB mode is active:
+- start server and ensure there are no repeated `Database query failed` or `Access denied` logs
+- verify `DB_HOST`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` in `.env`
+- run `database/schema.sql` (or `database/schema_update.sql`) on your MySQL instance
+
 ## 🔌 API Routes
 - `POST /api/register` - Register user
 - `POST /api/login` - Login user
@@ -105,6 +132,9 @@ If backend is in production mode and does not return `debugOtp`, configure SMTP 
 - `GET /api/destinations` - Get all destinations
 - `GET /api/transport?from=X&to=Y` - Search routes
 - `GET /api/hotels?city=X` - Find hotels
+- `POST /api/bookings` - Create hotel or transport booking
+- `GET /api/bookings?userId=X&type=hotel|transport` - List bookings
+- `DELETE /api/bookings/:id?userId=X` - Cancel booking
 - `POST /api/ai/plan` - Generate AI itinerary
 - `POST /api/ai/chat` - Chat with AI assistant
 - `POST /api/trips` - Save a trip

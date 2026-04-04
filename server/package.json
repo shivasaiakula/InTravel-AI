@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "smoke:auth": "node scripts/auth-smoke.js"
+    "smoke:auth": "node scripts/auth-smoke.js",
+    "smoke:bookings": "node scripts/bookings-smoke.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.11.0",

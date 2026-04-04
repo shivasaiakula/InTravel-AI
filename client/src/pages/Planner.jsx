@@ -27,7 +27,20 @@ const BUDGET_TIERS = [
 
 const TRAVEL_STYLES = ['Sightseeing', 'Food & Cuisine', 'Adventure Sports', 'Photography', 'Nightlife', 'Shopping', 'Nature & Wildlife', 'Spiritual'];
 
-function DayCard({ day, idx, onToggle, isOpen }) {
+const MOOD_ROUTES = [
+  { id: 'heritage', label: 'Heritage' },
+  { id: 'monsoon', label: 'Monsoon' },
+  { id: 'food-lanes', label: 'Food Lanes' },
+  { id: 'spiritual', label: 'Spiritual Calm' },
+];
+
+const RECOVERY_EVENTS = [
+  { id: 'delay', label: 'Transit Delay' },
+  { id: 'rain', label: 'Unexpected Rain' },
+  { id: 'budget_overrun', label: 'Budget Overrun' },
+];
+
+function DayCard({ day, idx, onToggle, isOpen, nearbyStops, onRecoverDay }) {
   return (
     <motion.div layout className="day-card glass-card">
       <div className="day-header" onClick={() => onToggle(idx)}>
@@ -48,6 +61,33 @@ function DayCard({ day, idx, onToggle, isOpen }) {
             exit={{ opacity: 0, height: 0 }}
           >
             <pre className="day-content">{day.content}</pre>
+            <div className="day-actions-row">
+              <button
+                type="button"
+                className="button-secondary btn-sm"
+                onClick={() => onRecoverDay(idx)}
+              >
+                Recover this day
+              </button>
+            </div>
+            {nearbyStops.length > 0 && (
+              <div className="nearby-plan">
+                <h4>Nearby places and best timings</h4>
+                <div className="nearby-list">
+                  {nearbyStops.map((spot, spotIdx) => (
+                    <div className="nearby-item" key={`${idx}-${spotIdx}-${spot.name}`}>
+                      <div className="nearby-title-row">
+                        <span className="nearby-place">{spot.name}</span>
+                        <span className="nearby-time">{spot.bestVisitWindow}</span>
+                      </div>
+                      {spotIdx > 0 && (
+                        <div className="nearby-travel">From previous stop: {spot.travelFromPrevious}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -172,6 +212,23 @@ function getBudgetRiskLevel(budget, days, travelers) {
   return { level: 'Low', score: 22, color: '#10b981', note: 'Comfortable range with room for premium activities.' };
 }
 
+function normalizeNearbyPlan(nearbyPlan, requestedDays) {
+  const emptyDays = Array.from({ length: requestedDays }, (_, idx) => ({ day: idx + 1, places: [] }));
+  if (!nearbyPlan || !Array.isArray(nearbyPlan.days)) return emptyDays;
+
+  const normalized = [...emptyDays];
+  nearbyPlan.days.forEach((entry, idx) => {
+    const dayIndex = Math.max(0, Math.min(requestedDays - 1, Number(entry?.day || idx + 1) - 1));
+    const places = Array.isArray(entry?.places) ? entry.places.slice(0, 5) : [];
+    normalized[dayIndex] = {
+      day: dayIndex + 1,
+      places,
+    };
+  });
+
+  return normalized;
+}
+
 export default function Planner() {
   const [step, setStep] = useState(1); // 1=purpose, 2=details, 3=result
   const [formData, setFormData] = useState({
@@ -180,11 +237,14 @@ export default function Planner() {
     budget: 20000,
     purpose: '',
     budgetTier: '',
+    moodRoute: 'heritage',
+    familyFriendly: false,
     styles: [],
     travelers: 2,
   });
   const [itinerary, setItinerary] = useState(null);
   const [parsedDays, setParsedDays] = useState([]);
+  const [nearbyPlanDays, setNearbyPlanDays] = useState([]);
   const [planCoverage, setPlanCoverage] = useState({ requestedDays: 0, generatedDays: 0, isComplete: false });
   const [itineraryVersions, setItineraryVersions] = useState([]);
   const [compareVersionId, setCompareVersionId] = useState('');
@@ -193,8 +253,18 @@ export default function Planner() {
   const [saved, setSaved] = useState(false);
   const [score, setScore] = useState(null);
   const [isPremium, setIsPremium] = useState(false);
+  const [premiumUnlocked, setPremiumUnlocked] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
   const [processingPayment, setProcessingPayment] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
+  const [recoveryState, setRecoveryState] = useState({
+    isOpen: false,
+    dayIndex: 0,
+    eventType: 'delay',
+    loading: false,
+    error: '',
+    success: '',
+  });
   const user = JSON.parse(localStorage.getItem('user'));
 
   const plannerRisk = useMemo(
@@ -216,10 +286,11 @@ export default function Planner() {
     };
   }, [compareVersionId, itineraryVersions]);
 
-  function applyGeneratedPlan(rawItinerary, sourceLabel) {
+  function applyGeneratedPlan(rawItinerary, sourceLabel, nearbyPlan) {
     const normalized = normalizeItineraryDays(rawItinerary, formData);
     setItinerary(normalized.itinerary);
     setParsedDays(normalized.days);
+    setNearbyPlanDays(normalizeNearbyPlan(nearbyPlan, normalized.requestedDays));
     setPlanCoverage({
       requestedDays: normalized.requestedDays,
       generatedDays: normalized.generatedDays,
@@ -233,6 +304,7 @@ export default function Planner() {
       source: sourceLabel,
       itinerary: normalized.itinerary,
       days: normalized.days,
+      nearbyPlanDays: normalizeNearbyPlan(nearbyPlan, normalized.requestedDays),
       formSnapshot: { ...formData },
     };
 
@@ -241,7 +313,8 @@ export default function Planner() {
 
   const handleGenerate = async (e) => {
     e?.preventDefault();
-    if (isPremium && !showCheckout) {
+    if (isPremium && !premiumUnlocked) {
+      setCheckoutError('');
       setShowCheckout(true);
       return;
     }
@@ -249,7 +322,7 @@ export default function Planner() {
     setSaved(false);
     try {
       const { data } = await axios.post('/api/ai/plan', formData);
-      applyGeneratedPlan(data.itinerary || '', data.cached ? 'cached' : 'ai');
+      applyGeneratedPlan(data.itinerary || '', data.cached ? 'cached' : 'ai', data.nearbyPlan);
 
       // Simulate trip score
       setScore({
@@ -263,22 +336,88 @@ export default function Planner() {
     } catch (err) {
       console.error(err);
       // Fallback plan still respects exact day count.
-      applyGeneratedPlan('', 'fallback');
+      applyGeneratedPlan('', 'fallback', null);
       setScore({ overall: 88, value: 85, experience: 90, efficiency: 87 });
       setStep(3);
     }
     setLoading(false);
   };
 
+  const openRecoveryModal = (dayIndex) => {
+    setRecoveryState({
+      isOpen: true,
+      dayIndex,
+      eventType: 'delay',
+      loading: false,
+      error: '',
+      success: '',
+    });
+  };
+
+  const closeRecoveryModal = () => {
+    setRecoveryState((prev) => ({ ...prev, isOpen: false, loading: false, error: '', success: '' }));
+  };
+
+  const handleRecoverDay = async () => {
+    const activeDay = parsedDays[recoveryState.dayIndex];
+    if (!activeDay) return;
+
+    setRecoveryState((prev) => ({ ...prev, loading: true, error: '', success: '' }));
+
+    try {
+      const payload = {
+        destination: formData.destination,
+        dayNumber: recoveryState.dayIndex + 1,
+        eventType: recoveryState.eventType,
+        existingDay: `${activeDay.title}\n${activeDay.content}`,
+        budget: formData.budget,
+        moodRoute: formData.moodRoute,
+        familyFriendly: formData.familyFriendly,
+      };
+
+      const { data } = await axios.post('/api/ai/recover-day', payload);
+      const recoveredRaw = String(data?.recoveredDay || '').trim();
+      const recoveredParsed = parseItineraryDays(recoveredRaw);
+      const recovered = recoveredParsed[0] || {
+        title: `Day ${recoveryState.dayIndex + 1} - Recovery plan`,
+        content: recoveredRaw,
+      };
+
+      const nextDays = parsedDays.map((day, index) => {
+        if (index !== recoveryState.dayIndex) return day;
+        return {
+          ...day,
+          title: recovered.title || day.title,
+          content: recovered.content || day.content,
+        };
+      });
+
+      setParsedDays(nextDays);
+      setItinerary(composeItineraryText(nextDays));
+      setRecoveryState((prev) => ({ ...prev, loading: false, success: 'Day recovered successfully.' }));
+    } catch (error) {
+      setRecoveryState((prev) => ({
+        ...prev,
+        loading: false,
+        error: error?.response?.data?.error || 'Could not recover this day right now.',
+      }));
+    }
+  };
+
   const handlePayment = async () => {
+    setCheckoutError('');
     setProcessingPayment(true);
     try {
-      await axios.post('/api/checkout', { amount: 499, purpose: `Premium Itinerary: ${formData.destination}` });
+      const { data } = await axios.post('/api/checkout', { amount: 499, purpose: `Premium Itinerary: ${formData.destination}` });
+      if (!data?.success) {
+        throw new Error('Checkout did not complete successfully');
+      }
+
+      setPremiumUnlocked(true);
       setShowCheckout(false);
       handleGenerate(); // Call generation directly after payment mock success
     } catch {
-      setShowCheckout(false);
-      handleGenerate();
+      setCheckoutError('Payment simulation failed. Please try again.');
     } finally {
       setProcessingPayment(false);
     }
@@ -290,6 +429,7 @@ export default function Planner() {
     setFormData(version.formSnapshot);
     setItinerary(version.itinerary);
     setParsedDays(version.days);
+    setNearbyPlanDays(version.nearbyPlanDays || []);
     setPlanCoverage({ requestedDays: version.formSnapshot.days, generatedDays: version.days.length, isComplete: version.days.length === version.formSnapshot.days });
     setOpenDays([0]);
     setStep(3);
@@ -473,11 +613,59 @@ export default function Planner() {
                   </div>
                 </div>
 
+                <div className="form-group">
+                  <label><Star size={16} /> Mood Route</label>
+                  <div className="chip-row">
+                    {MOOD_ROUTES.map((mood) => (
+                      <div
+                        key={mood.id}
+                        className={`chip ${formData.moodRoute === mood.id ? 'active' : ''}`}
+                        onClick={() => setFormData({ ...formData, moodRoute: mood.id })}
+                      >
+                        {mood.label}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="planner-toggle-row">
+                  <input
+                    type="checkbox"
+                    id="familyToggle"
+                    checked={formData.familyFriendly}
+                    onChange={(e) => setFormData({ ...formData, familyFriendly: e.target.checked })}
+                    style={{ width: '18px', height: '18px', accentColor: 'var(--accent-green)' }}
+                  />
+                  <label htmlFor="familyToggle" style={{ cursor: 'pointer', flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>Family-friendly planning</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>Fewer transfers, lower-friction stops, and calmer evening pacing.</div>
+                  </label>
+                </div>
+
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', padding: '1rem', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 'var(--radius-sm)' }}>
-                  <input type="checkbox" id="premiumToggle" checked={isPremium} onChange={e => setIsPremium(e.target.checked)} style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }} />
+                  <input
+                    type="checkbox"
+                    id="premiumToggle"
+                    checked={isPremium}
+                    onChange={e => {
+                      const checked = e.target.checked;
+                      setIsPremium(checked);
+                      setCheckoutError('');
+                      if (!checked) {
+                        setPremiumUnlocked(false);
+                        setShowCheckout(false);
+                      }
+                    }}
+                    style={{ width: '18px', height: '18px', accentColor: 'var(--primary)' }}
+                  />
                   <label htmlFor="premiumToggle" style={{ cursor: 'pointer', flex: 1 }}>
                     <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>Enable Premium AI Generation (₹499)</div>
                     <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>Unlock verified secret spots, priority routing, and hyper-detailed day plans.</div>
+                    {isPremium && premiumUnlocked && (
+                      <div style={{ color: 'var(--accent-green)', fontSize: '0.78rem', marginTop: '0.35rem', fontWeight: 600 }}>
+                        Premium checkout complete
+                      </div>
+                    )}
                   </label>
                 </div>
 
@@ -592,6 +780,8 @@ export default function Planner() {
                     <span>🗓️ {formData.days} Days</span>
                     <span>💰 ₹{formData.budget.toLocaleString('en-IN')}</span>
                     <span>👤 {formData.purpose}</span>
+                    <span>🎭 {formData.moodRoute}</span>
+                    {formData.familyFriendly && <span>👨‍👩‍👧 Family adjusted</span>}
                   </div>
                 </motion.div>
               )}
@@ -655,7 +845,15 @@ export default function Planner() {
                 <div className="days-container">
                   {parsedDays.length > 0 ? (
                     parsedDays.map((day, idx) => (
-                      <DayCard key={idx} day={day} idx={idx} onToggle={toggleDay} isOpen={openDays.includes(idx)} />
+                      <DayCard
+                        key={idx}
+                        day={day}
+                        idx={idx}
+                        onToggle={toggleDay}
+                        isOpen={openDays.includes(idx)}
+                        nearbyStops={nearbyPlanDays[idx]?.places || []}
+                        onRecoverDay={openRecoveryModal}
+                      />
                     ))
                   ) : (
                     <div className="itinerary-text">
@@ -690,14 +888,44 @@ export default function Planner() {
 
       {/* Checkout Modal */}
       {showCheckout && (
-        <div className="modal-overlay" onClick={() => setShowCheckout(false)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.8)' }}>
-          <div className="glass-card" onClick={e => e.stopPropagation()} style={{ width: '90%', maxWidth: '400px', textAlign: 'center', background: 'var(--bg-2)' }}>
-            <h3 style={{ marginBottom: '0.5rem' }}>Premium AI Access</h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>Generate a hyper-detailed, verified itinerary for {formData.destination}.</p>
-            <div style={{ fontSize: '2.5rem', fontWeight: 800, marginBottom: '2rem', color: 'var(--text)' }}>₹499</div>
-            <button className="button-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={handlePayment} disabled={processingPayment}>
+        <div className="checkout-overlay" onClick={() => setShowCheckout(false)}>
+          <div className="glass-card checkout-modal" onClick={e => e.stopPropagation()}>
+            <h3>Premium AI Access</h3>
+            <p>Generate a hyper-detailed, verified itinerary for {formData.destination}.</p>
+            <div className="checkout-price">₹499</div>
+            {checkoutError && <div className="checkout-error">{checkoutError}</div>}
+            <button className="button-primary checkout-button" onClick={handlePayment} disabled={processingPayment}>
               {processingPayment ? <><RefreshCw size={16} className="spin-icon" /> Processing...</> : 'Pay with API (Mock)'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {recoveryState.isOpen && (
+        <div className="checkout-overlay" onClick={closeRecoveryModal}>
+          <div className="glass-card checkout-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Recover Day {recoveryState.dayIndex + 1}</h3>
+            <p>Re-plan only this day without changing the rest of your itinerary.</p>
+            <div className="recovery-options">
+              {RECOVERY_EVENTS.map((event) => (
+                <button
+                  key={event.id}
+                  type="button"
+                  className={`chip ${recoveryState.eventType === event.id ? 'active' : ''}`}
+                  onClick={() => setRecoveryState((prev) => ({ ...prev, eventType: event.id, error: '', success: '' }))}
+                >
+                  {event.label}
+                </button>
+              ))}
+            </div>
+            {recoveryState.error && <div className="checkout-error">{recoveryState.error}</div>}
+            {recoveryState.success && <div className="recovery-success">{recoveryState.success}</div>}
+            <div className="recovery-actions">
+              <button className="button-secondary btn-sm" onClick={closeRecoveryModal} disabled={recoveryState.loading}>Close</button>
+              <button className="button-primary btn-sm" onClick={handleRecoverDay} disabled={recoveryState.loading}>
+                {recoveryState.loading ? 'Recovering...' : 'Recover my day'}
+              </button>
+            </div>
           </div>
         </div>
       )}

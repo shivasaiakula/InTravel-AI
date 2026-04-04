@@ -101,6 +101,102 @@
   font-size: 0.82rem;
 }
 
+.optimizer-insights {
+  margin-bottom: 1.5rem;
+  padding: 1rem 1.25rem;
+}
+
+.optimizer-head {
+  margin-bottom: 0.8rem;
+}
+
+.optimizer-meta {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+}
+
+.optimizer-pill {
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: var(--radius-md);
+  padding: 0.65rem 0.8rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.optimizer-pill span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.optimizer-pill strong {
+  font-size: 0.98rem;
+}
+
+.optimizer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.optimizer-row {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: 0.65rem 0.8rem;
+  display: grid;
+  grid-template-columns: 1.15fr 1fr 0.8fr 0.75fr;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.optimizer-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.optimizer-values {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.optimizer-values strong {
+  color: var(--text);
+}
+
+.optimizer-action {
+  font-size: 0.79rem;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.optimizer-action.is-cut {
+  color: var(--accent-green);
+}
+
+.optimizer-action.is-up {
+  color: var(--accent-amber);
+}
+
+.optimizer-confidence {
+  text-align: right;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.optimizer-footnote {
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
 /* Summary Row */
 .budget-summary-row {
   display: grid;
@@ -414,6 +510,19 @@
 
   .alternatives-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .optimizer-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .optimizer-row {
+    grid-template-columns: 1fr;
+    gap: 0.45rem;
+  }
+
+  .optimizer-confidence {
+    text-align: left;
   }
 }
 
