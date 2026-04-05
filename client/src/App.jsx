@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
-import CommandPalette from './components/CommandPalette';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -19,34 +18,14 @@ import Chatbot from './components/Chatbot';
 const SIMPLE_THEME = 'minimal-light';
 
 function App() {
-  const [commandOpen, setCommandOpen] = useState(false);
-
   useEffect(() => {
     document.documentElement.setAttribute('data-season-theme', SIMPLE_THEME);
     localStorage.setItem('intravel-theme', SIMPLE_THEME);
   }, []);
 
-  useEffect(() => {
-    const handleShortcut = (event) => {
-      const isShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k';
-      if (isShortcut) {
-        event.preventDefault();
-        setCommandOpen((prev) => !prev);
-      }
-
-      if (event.key === 'Escape') {
-        setCommandOpen(false);
-      }
-    };
-
-    window.addEventListener('keydown', handleShortcut);
-    return () => window.removeEventListener('keydown', handleShortcut);
-  }, []);
-
   return (
     <div className="App">
-      <Navbar onOpenCommandPalette={() => setCommandOpen(true)} />
-      <CommandPalette isOpen={commandOpen} onClose={() => setCommandOpen(false)} />
+      <Navbar />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />

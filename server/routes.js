@@ -252,6 +252,38 @@ async function sendResetOtpEmail(email, otp) {
     return true;
 }
 
+async function sendBookingTicketEmail({ email, booking }) {
+    const transporter = getOtpTransporter();
+    if (!transporter) return false;
+
+    const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+    const appName = process.env.APP_NAME || 'InTravel AI';
+    const details = booking?.details || {};
+    const payment = details?.payment || {};
+    const lines = [
+        `Booking ID: ${booking.id}`,
+        `Type: ${booking.type}`,
+        `Service: ${booking.title}`,
+        `City: ${booking.city}`,
+        `Amount: INR ${Number(booking.amount || 0).toFixed(2)}`,
+        details?.from && details?.to ? `Route: ${details.from} -> ${details.to}` : null,
+        details?.travelDate ? `Travel Date: ${details.travelDate}` : null,
+        Array.isArray(details?.seats) && details.seats.length > 0 ? `Seats: ${details.seats.join(', ')}` : null,
+        payment?.method ? `Payment Method: ${payment.method}` : null,
+        payment?.status ? `Payment Status: ${payment.status}` : null,
+    ].filter(Boolean);
+
+    await transporter.sendMail({
+        from,
+        to: email,
+        subject: `${appName} booking ticket #${booking.id}`,
+        text: lines.join('\n'),
+        html: `<p>${lines.join('</p><p>')}</p>`,
+    });
+
+    return true;
+}
+
 async function findUserByEmail(email) {
     try {
         const [users] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
@@ -589,6 +621,139 @@ function buildTransportReality(route) {
     };
 }
 
+function buildSeatLayout(seedText) {
+    const seed = hashString(seedText);
+    const lower = [];
+    const upper = [];
+
+    for (let i = 1; i <= 16; i += 1) {
+        lower.push({
+            id: `L${i}`,
+            available: ((seed + i) % 5) !== 0,
+        });
+    }
+
+    for (let i = 1; i <= 12; i += 1) {
+        upper.push({
+            id: `U${i}`,
+            available: ((seed + (i * 2)) % 6) !== 0,
+        });
+    }
+
+    return { lower, upper };
+}
+
+function normalizeTransportService(service, index, from, to, travelDate) {
+    const operator = String(service?.operator || service?.name || `Operator ${index + 1}`);
+    const busType = String(service?.busType || service?.type || 'AC Sleeper');
+    const departure = String(service?.departure || service?.departureTime || '21:00');
+    const arrival = String(service?.arrival || service?.arrivalTime || '05:30');
+    const duration = String(service?.duration || '8h 30m');
+    const rating = Number(service?.rating || 4.2).toFixed(1);
+    const price = Math.max(250, Number(service?.price || service?.fare || 650));
+    const seatsLeft = Math.max(1, Number(service?.seatsLeft || service?.availableSeats || 10));
+    const boardingPoints = Array.isArray(service?.boardingPoints) && service.boardingPoints.length > 0
+        ? service.boardingPoints
+        : [`${from} Main Bus Stand`, `${from} Bypass`, `${from} City Center`];
+    const droppingPoints = Array.isArray(service?.droppingPoints) && service.droppingPoints.length > 0
+        ? service.droppingPoints
+        : [`${to} Main Bus Stand`, `${to} Highway Stop`, `${to} City Center`];
+
+    return {
+        id: String(service?.id || `${from}-${to}-${travelDate}-${index}`),
+        operator,
+        busType,
+        departure,
+        arrival,
+        duration,
+        rating,
+        seatsLeft,
+        price,
+        boardingPoints,
+        droppingPoints,
+        seatLayout: buildSeatLayout(`${operator}|${busType}|${from}|${to}|${travelDate}|${index}`),
+    };
+}
+
+function buildFallbackTransportServices(from, to, travelDate) {
+    const base = mockTransport.filter((item) =>
+        String(item.from || '').toLowerCase() === String(from || '').toLowerCase()
+        && String(item.to || '').toLowerCase() === String(to || '').toLowerCase(),
+    );
+
+    const seedRoutes = base.length > 0
+        ? base.filter((item) => String(item.mode || '').toLowerCase() === 'bus')
+        : [];
+
+    const templates = seedRoutes.length > 0
+        ? seedRoutes
+        : [
+            { operator: 'Orange Travels', price: 780, duration: '9h 10m', mode: 'Bus' },
+            { operator: 'VRL Travels', price: 860, duration: '8h 50m', mode: 'Bus' },
+            { operator: 'SRS Travels', price: 920, duration: '8h 20m', mode: 'Bus' },
+            { operator: 'Morning Star', price: 700, duration: '9h 40m', mode: 'Bus' },
+            { operator: 'Kaveri Travels', price: 830, duration: '8h 55m', mode: 'Bus' },
+            { operator: 'Jabbar Travels', price: 970, duration: '8h 05m', mode: 'Bus' },
+        ];
+
+    const departures = ['18:30', '19:15', '20:00', '21:10', '22:00', '23:05'];
+    const arrivals = ['03:45', '04:20', '05:10', '05:55', '06:20', '07:00'];
+    const types = ['AC Sleeper', 'Volvo Multi-Axle', 'Seater AC', 'Non-AC Sleeper', 'AC Semi-Sleeper'];
+
+    return templates.slice(0, 8).map((tpl, index) => normalizeTransportService({
+        id: `${from}-${to}-${index}`,
+        operator: tpl.operator,
+        busType: types[index % types.length],
+        departure: departures[index % departures.length],
+        arrival: arrivals[index % arrivals.length],
+        duration: tpl.duration,
+        rating: 4 + ((index % 5) * 0.15),
+        seatsLeft: 6 + (index * 2),
+        price: Number(tpl.price || 700) + (index * 60),
+        boardingPoints: [`${from} Main Bus Stand`, `${from} Bypass`, `${from} Metro Point`],
+        droppingPoints: [`${to} Main Bus Stand`, `${to} Highway`, `${to} Market`],
+    }, index, from, to, travelDate));
+}
+
+async function fetchProviderTransportServices({ from, to, travelDate, passengers }) {
+    const endpoint = process.env.TRANSPORT_SEARCH_API_URL;
+    if (!endpoint || typeof fetch !== 'function') {
+        return null;
+    }
+
+    const url = new URL(endpoint);
+    url.searchParams.set('from', from);
+    url.searchParams.set('to', to);
+    url.searchParams.set('date', travelDate);
+    url.searchParams.set('passengers', String(passengers || 1));
+
+    const headers = {};
+    if (process.env.TRANSPORT_SEARCH_API_KEY) {
+        headers.Authorization = `Bearer ${process.env.TRANSPORT_SEARCH_API_KEY}`;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1800);
+
+    try {
+        const response = await fetch(url.toString(), { headers, signal: controller.signal });
+        if (!response.ok) {
+            throw new Error(`transport provider returned ${response.status}`);
+        }
+
+        const payload = await response.json();
+        const rows = Array.isArray(payload)
+            ? payload
+            : Array.isArray(payload?.services)
+                ? payload.services
+                : [];
+
+        return rows;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
 const MOOD_ROUTE_MAP = {
     heritage: 'Prioritize forts, palaces, museums, old-town walks, and stories of local history.',
     monsoon: 'Prioritize rain-friendly indoor stops, scenic monsoon viewpoints, and flexible transit buffers.',
@@ -708,13 +873,96 @@ router.get('/transport', async (req, res) => {
     }
 });
 
+router.get('/transport/search', async (req, res) => {
+    const from = String(req.query?.from || '').trim();
+    const to = String(req.query?.to || '').trim();
+    const travelDate = String(req.query?.travelDate || '').trim();
+    const passengers = Math.max(1, Math.min(6, Number(req.query?.passengers) || 1));
+
+    if (!from || !to || !travelDate) {
+        return res.status(400).json({ error: 'from, to, and travelDate are required' });
+    }
+
+    try {
+        const providerRows = await fetchProviderTransportServices({ from, to, travelDate, passengers });
+        if (Array.isArray(providerRows) && providerRows.length > 0) {
+            const services = providerRows
+                .slice(0, 20)
+                .map((item, index) => normalizeTransportService(item, index, from, to, travelDate));
+
+            return res.json({ source: 'provider', services });
+        }
+    } catch (error) {
+        // Continue to fallback route if provider is unavailable.
+    }
+
+    try {
+        const [rows] = await db.execute(
+            'SELECT * FROM transport WHERE from_city = ? AND to_city = ? LIMIT 25',
+            [from, to],
+        );
+
+        if (Array.isArray(rows) && rows.length > 0) {
+            const services = rows
+                .map((row, index) => normalizeTransportService({
+                    id: row.id,
+                    operator: row.operator,
+                    busType: row.mode,
+                    duration: row.duration,
+                    price: row.price,
+                }, index, from, to, travelDate));
+
+            return res.json({ source: 'database', services });
+        }
+    } catch (error) {
+        if (!isDatabaseUnavailable(error)) {
+            return res.status(500).json({ error: error.message });
+        }
+    }
+
+    const services = buildFallbackTransportServices(from, to, travelDate);
+    return res.json({ source: 'fallback', services });
+});
+
 // ── HOTEL ROUTES ──
 router.get('/hotels', async (req, res) => {
-    const { city } = req.query;
+    const city = String(req.query?.city || '').trim();
+    if (!city) return res.json([]);
+
+    const cityLower = city.toLowerCase();
+    const rankHotels = (items) => [...items].sort((a, b) => {
+        const ratingA = Number(a.rating || 0);
+        const ratingB = Number(b.rating || 0);
+        if (ratingB !== ratingA) return ratingB - ratingA;
+        const priceA = Number(a.price_per_night || a.price || 0);
+        const priceB = Number(b.price_per_night || b.price || 0);
+        return priceA - priceB;
+    });
+
     try {
-        const [rows] = await db.execute('SELECT * FROM hotels WHERE city = ?', [city]);
-        res.json(rows.length > 0 ? rows : mockHotels.filter(h => h.city === city));
-    } catch (err) { res.json(mockHotels.filter(h => h.city === city)); }
+        const [rows] = await db.execute(
+            `SELECT *
+             FROM hotels
+             WHERE LOWER(city) = LOWER(?) OR LOWER(city) LIKE ?
+             ORDER BY rating DESC, price_per_night ASC
+             LIMIT 20`,
+            [city, `%${cityLower}%`],
+        );
+
+        const fallbackRows = mockHotels.filter((h) => {
+            const c = String(h.city || '').toLowerCase();
+            return c === cityLower || c.includes(cityLower) || cityLower.includes(c);
+        });
+
+        const merged = rows.length > 0 ? rows : fallbackRows;
+        return res.json(rankHotels(merged));
+    } catch (err) {
+        const fallbackRows = mockHotels.filter((h) => {
+            const c = String(h.city || '').toLowerCase();
+            return c === cityLower || c.includes(cityLower) || cityLower.includes(c);
+        });
+        return res.json(rankHotels(fallbackRows));
+    }
 });
 
 router.post('/bookings', async (req, res) => {
@@ -821,6 +1069,201 @@ router.get('/bookings', async (req, res) => {
     }
 });
 
+router.get('/offers/validate', async (req, res) => {
+    const code = String(req.query?.code || '').trim().toUpperCase();
+    const amount = Math.max(0, Number(req.query?.amount) || 0);
+    const type = String(req.query?.type || '').trim().toLowerCase();
+
+    const offers = {
+        WELCOME10: { kind: 'percent', value: 10, maxDiscount: 1000, minAmount: 2000, allowedTypes: ['hotel', 'transport'] },
+        HOTEL15: { kind: 'percent', value: 15, maxDiscount: 2000, minAmount: 4000, allowedTypes: ['hotel'] },
+        BUS100: { kind: 'flat', value: 100, maxDiscount: 100, minAmount: 500, allowedTypes: ['transport'] },
+    };
+
+    if (!code || !offers[code]) {
+        return res.json({ valid: false, message: 'Coupon not found' });
+    }
+
+    const offer = offers[code];
+    if (!offer.allowedTypes.includes(type)) {
+        return res.json({ valid: false, message: `Coupon ${code} is not valid for ${type || 'this'} bookings` });
+    }
+
+    if (amount < offer.minAmount) {
+        return res.json({ valid: false, message: `Minimum order for ${code} is INR ${offer.minAmount}` });
+    }
+
+    let discount = 0;
+    if (offer.kind === 'percent') {
+        discount = Math.round((amount * offer.value) / 100);
+    } else {
+        discount = Math.round(offer.value);
+    }
+    discount = Math.min(discount, offer.maxDiscount, amount);
+    const finalAmount = Math.max(0, amount - discount);
+
+    return res.json({
+        valid: true,
+        code,
+        discount,
+        finalAmount,
+    });
+});
+
+function computeRefundEstimate(booking) {
+    const amount = Math.max(0, Number(booking?.amount) || 0);
+    const details = booking?.details || {};
+    const paymentStatus = String(details?.payment?.status || '').toLowerCase();
+    const startDateRaw = details?.checkIn || details?.travelDate || booking?.createdAt;
+    const startDate = startDateRaw ? new Date(`${String(startDateRaw).slice(0, 10)}T12:00:00`) : new Date();
+    const now = new Date();
+    const hoursBefore = (startDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+    if (String(booking?.status || '').toUpperCase() === 'CANCELLED') {
+        return { refundableAmount: 0, refundPercent: 0, policyLabel: 'Booking already cancelled' };
+    }
+    if (paymentStatus && paymentStatus !== 'success' && paymentStatus !== 'paid' && paymentStatus !== 'paid_mock') {
+        return { refundableAmount: 0, refundPercent: 0, policyLabel: 'Payment incomplete - no refund applicable' };
+    }
+
+    let refundPercent = 0;
+    let policyLabel = 'No refund';
+    if (hoursBefore >= 168) {
+        refundPercent = 90;
+        policyLabel = 'Free cancellation window';
+    } else if (hoursBefore >= 72) {
+        refundPercent = 60;
+        policyLabel = 'Standard cancellation window';
+    } else if (hoursBefore >= 24) {
+        refundPercent = 30;
+        policyLabel = 'Late cancellation window';
+    }
+
+    return {
+        refundableAmount: Math.round((amount * refundPercent) / 100),
+        refundPercent,
+        policyLabel,
+        hoursBefore: Math.round(hoursBefore),
+    };
+}
+
+router.get('/bookings/:id/refund-estimate', async (req, res) => {
+    const bookingId = Number(req.params?.id);
+    const userId = Number(req.query?.userId);
+    if (!Number.isFinite(bookingId) || bookingId <= 0) {
+        return res.status(400).json({ error: 'Invalid booking id' });
+    }
+    if (!Number.isFinite(userId) || userId <= 0) {
+        return res.status(400).json({ error: 'Valid user id is required' });
+    }
+
+    try {
+        await ensureBookingsTable();
+        const [rows] = await db.execute(
+            'SELECT id, booking_type, title, city, amount, details_json, status, created_at FROM travel_bookings WHERE id = ? AND user_id = ? LIMIT 1',
+            [bookingId, userId],
+        );
+        if (!rows?.length) return res.status(404).json({ error: 'Booking not found' });
+
+        const row = rows[0];
+        const booking = {
+            id: row.id,
+            type: row.booking_type,
+            title: row.title,
+            city: row.city,
+            amount: Number(row.amount) || 0,
+            details: typeof row.details_json === 'string' ? JSON.parse(row.details_json || '{}') : (row.details_json || {}),
+            status: row.status,
+            createdAt: row.created_at,
+        };
+
+        return res.json(computeRefundEstimate(booking));
+    } catch (err) {
+        if (!isDatabaseUnavailable(err)) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        const booking = localBookings.find((item) => Number(item.id) === bookingId && Number(item.userId) === userId);
+        if (!booking) return res.status(404).json({ error: 'Booking not found' });
+        return res.json(computeRefundEstimate(booking));
+    }
+});
+
+router.post('/bookings/:id/modify', async (req, res) => {
+    const bookingId = Number(req.params?.id);
+    const userId = Number(req.body?.userId);
+    const patch = req.body?.patch || {};
+
+    if (!Number.isFinite(bookingId) || bookingId <= 0) {
+        return res.status(400).json({ error: 'Invalid booking id' });
+    }
+    if (!Number.isFinite(userId) || userId <= 0) {
+        return res.status(400).json({ error: 'Valid user id is required' });
+    }
+
+    const allowedDetails = ['checkIn', 'checkOut', 'guests', 'rooms', 'travelDate', 'passengers'];
+    const allowedTop = ['title', 'city', 'amount'];
+
+    const applyPatch = (booking) => {
+        const details = { ...(booking.details || {}) };
+        allowedDetails.forEach((key) => {
+            if (patch[key] !== undefined && patch[key] !== null) details[key] = patch[key];
+        });
+
+        const updated = {
+            ...booking,
+            details,
+        };
+
+        allowedTop.forEach((key) => {
+            if (patch[key] !== undefined && patch[key] !== null) {
+                updated[key] = key === 'amount' ? Math.max(0, Number(patch[key]) || 0) : patch[key];
+            }
+        });
+
+        return updated;
+    };
+
+    try {
+        await ensureBookingsTable();
+        const [rows] = await db.execute(
+            'SELECT id, booking_type, user_id, title, city, amount, details_json, status, created_at FROM travel_bookings WHERE id = ? AND user_id = ? LIMIT 1',
+            [bookingId, userId],
+        );
+        if (!rows?.length) return res.status(404).json({ error: 'Booking not found' });
+
+        const row = rows[0];
+        const current = {
+            id: row.id,
+            type: row.booking_type,
+            userId: row.user_id,
+            title: row.title,
+            city: row.city,
+            amount: Number(row.amount) || 0,
+            details: typeof row.details_json === 'string' ? JSON.parse(row.details_json || '{}') : (row.details_json || {}),
+            status: row.status,
+            createdAt: row.created_at,
+        };
+        const updated = applyPatch(current);
+
+        await db.execute(
+            'UPDATE travel_bookings SET title = ?, city = ?, amount = ?, details_json = ? WHERE id = ? AND user_id = ?',
+            [updated.title, updated.city, updated.amount, JSON.stringify(updated.details), bookingId, userId],
+        );
+
+        return res.json({ success: true, booking: updated });
+    } catch (err) {
+        if (!isDatabaseUnavailable(err)) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        const index = localBookings.findIndex((item) => Number(item.id) === bookingId && Number(item.userId) === userId);
+        if (index === -1) return res.status(404).json({ error: 'Booking not found' });
+        localBookings[index] = applyPatch(localBookings[index]);
+        return res.json({ success: true, booking: localBookings[index] });
+    }
+});
+
 router.delete('/bookings/:id', async (req, res) => {
     const bookingId = Number(req.params?.id);
     const userIdRaw = Number(req.query?.userId ?? req.body?.userId);
@@ -875,6 +1318,118 @@ router.delete('/bookings/:id', async (req, res) => {
             status: 'CANCELLED',
         };
         return res.json({ success: true, message: 'Booking cancelled successfully' });
+    }
+});
+
+router.post('/bookings/:id/payment', async (req, res) => {
+    const bookingId = Number(req.params?.id);
+    const userId = Number(req.body?.userId);
+    const method = String(req.body?.method || 'upi').trim().toLowerCase();
+    const status = String(req.body?.status || '').trim().toLowerCase();
+    const allowed = ['pending', 'success', 'failed'];
+
+    if (!Number.isFinite(bookingId) || bookingId <= 0) {
+        return res.status(400).json({ error: 'Invalid booking id' });
+    }
+    if (!Number.isFinite(userId) || userId <= 0) {
+        return res.status(400).json({ error: 'Valid user id is required' });
+    }
+    if (!allowed.includes(status)) {
+        return res.status(400).json({ error: 'Payment status must be pending/success/failed' });
+    }
+
+    const patchDetails = (existing) => {
+        const details = typeof existing === 'object' && existing !== null ? { ...existing } : {};
+        const prev = details.payment || {};
+        details.payment = {
+            method,
+            status,
+            updatedAt: new Date().toISOString(),
+            attempts: Number(prev.attempts || 0) + 1,
+        };
+        return details;
+    };
+
+    try {
+        await ensureBookingsTable();
+        const [rows] = await db.execute(
+            'SELECT id, details_json FROM travel_bookings WHERE id = ? AND user_id = ? LIMIT 1',
+            [bookingId, userId],
+        );
+
+        if (!rows?.length) {
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+
+        const row = rows[0];
+        const details = patchDetails(typeof row.details_json === 'string' ? JSON.parse(row.details_json || '{}') : (row.details_json || {}));
+        await db.execute('UPDATE travel_bookings SET details_json = ? WHERE id = ? AND user_id = ?', [JSON.stringify(details), bookingId, userId]);
+        return res.json({ success: true, status, method });
+    } catch (err) {
+        if (!isDatabaseUnavailable(err)) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        const index = localBookings.findIndex((item) => Number(item.id) === bookingId && Number(item.userId) === userId);
+        if (index === -1) return res.status(404).json({ error: 'Booking not found' });
+        localBookings[index] = {
+            ...localBookings[index],
+            details: patchDetails(localBookings[index].details),
+        };
+        return res.json({ success: true, status, method });
+    }
+});
+
+router.post('/bookings/:id/send-ticket', async (req, res) => {
+    const bookingId = Number(req.params?.id);
+    const userId = Number(req.body?.userId);
+    const requestedEmail = String(req.body?.email || '').trim();
+
+    if (!Number.isFinite(bookingId) || bookingId <= 0) {
+        return res.status(400).json({ error: 'Invalid booking id' });
+    }
+    if (!Number.isFinite(userId) || userId <= 0) {
+        return res.status(400).json({ error: 'Valid user id is required' });
+    }
+
+    const normalizeBooking = (item) => ({
+        id: item.id,
+        type: item.type || item.booking_type,
+        title: item.title,
+        city: item.city,
+        amount: Number(item.amount) || 0,
+        details: typeof item.details_json === 'string' ? JSON.parse(item.details_json || '{}') : (item.details || item.details_json || {}),
+    });
+
+    try {
+        await ensureBookingsTable();
+        const [rows] = await db.execute(
+            'SELECT id, booking_type, title, city, amount, details_json FROM travel_bookings WHERE id = ? AND user_id = ? LIMIT 1',
+            [bookingId, userId],
+        );
+        if (!rows?.length) return res.status(404).json({ error: 'Booking not found' });
+
+        const booking = normalizeBooking(rows[0]);
+        const email = requestedEmail || String(booking?.details?.contactInfo?.email || '').trim();
+        if (!email) return res.status(400).json({ error: 'Recipient email is required' });
+
+        const sent = await sendBookingTicketEmail({ email, booking });
+        if (sent) return res.json({ sent: true, email });
+        return res.json({ sent: false, mock: true, email, message: 'SMTP not configured. Email mocked.' });
+    } catch (err) {
+        if (!isDatabaseUnavailable(err)) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        const booking = localBookings.find((item) => Number(item.id) === bookingId && Number(item.userId) === userId);
+        if (!booking) return res.status(404).json({ error: 'Booking not found' });
+        const normalized = normalizeBooking(booking);
+        const email = requestedEmail || String(normalized?.details?.contactInfo?.email || '').trim();
+        if (!email) return res.status(400).json({ error: 'Recipient email is required' });
+
+        const sent = await sendBookingTicketEmail({ email, booking: normalized });
+        if (sent) return res.json({ sent: true, email });
+        return res.json({ sent: false, mock: true, email, message: 'SMTP not configured. Email mocked.' });
     }
 });
 

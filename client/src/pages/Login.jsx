@@ -28,24 +28,51 @@ function Login() {
   const handleLogin = async (e) => {
     e.preventDefault();
     setErr('');
+
     if (retryAfterSeconds > 0) {
       setErr(`Too many attempts. Try again in ${retryAfterSeconds}s.`);
       return;
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail || !password) {
-      setErr('Email and password are required');
+
+    // Validation
+    if (!normalizedEmail) {
+      setErr('Email is required');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setErr('Please enter a valid email address');
+      return;
+    }
+    if (!password) {
+      setErr('Password is required');
+      return;
+    }
+    if (password.length < 6) {
+      setErr('Password must be at least 6 characters');
       return;
     }
 
     setLoading(true);
     try {
-      const { data } = await axios.post('/api/login', { email: normalizedEmail, password });
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      navigate('/dashboard');
-      setRetryAfterSeconds(0);
+      const { data } = await axios.post('/api/login', {
+        email: normalizedEmail,
+        password
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (data.token && data.user) {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        navigate('/dashboard');
+        setRetryAfterSeconds(0);
+      } else {
+        setErr('Invalid response from server');
+      }
     } catch (error) {
       const nextRetry = Number(error?.response?.data?.retryAfterSeconds || 0);
       if (nextRetry > 0) {
