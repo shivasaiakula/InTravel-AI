@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('./db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
@@ -930,14 +931,77 @@ router.get('/hotels', async (req, res) => {
     if (!city) return res.json([]);
 
     const cityLower = city.toLowerCase();
-    const rankHotels = (items) => [...items].sort((a, b) => {
-        const ratingA = Number(a.rating || 0);
-        const ratingB = Number(b.rating || 0);
-        if (ratingB !== ratingA) return ratingB - ratingA;
-        const priceA = Number(a.price_per_night || a.price || 0);
-        const priceB = Number(b.price_per_night || b.price || 0);
-        return priceA - priceB;
-    });
+    const minRating = Math.max(0, Number(req.query?.minRating) || 0);
+    const maxPrice = Math.max(0, Number(req.query?.maxPrice) || 0);
+    const sortMode = String(req.query?.sort || 'best').trim().toLowerCase();
+    const amenityQuery = String(req.query?.amenities || '').trim().toLowerCase();
+
+    const scoreHotel = (item) => {
+        const rating = Number(item.rating || 0);
+        const price = Number(item.price_per_night || item.price || 0);
+        const cityName = String(item.city || '').toLowerCase();
+        const name = String(item.name || '').toLowerCase();
+        const amenities = String(item.amenities || '').toLowerCase();
+        const reasons = [];
+        let score = (rating * 20) - (price / 250);
+
+        if (cityName === cityLower) {
+            score += 28;
+            reasons.push('Exact city match');
+        } else if (cityName.includes(cityLower) || cityLower.includes(cityName)) {
+            score += 16;
+            reasons.push('Nearby city match');
+        }
+
+        if (name.includes(cityLower)) {
+            score += 8;
+            reasons.push('Hotel name matches destination');
+        }
+
+        if (amenityQuery) {
+            const matched = amenityQuery.split(/[\s,]+/).filter(Boolean).every((term) => amenities.includes(term));
+            if (matched) {
+                score += 14;
+                reasons.push('Amenities match');
+            }
+        }
+
+        if (rating >= 4.5) {
+            score += 10;
+            reasons.push('Highly rated');
+        }
+        if (price > 0 && price <= 5000) {
+            score += 6;
+            reasons.push('Great value');
+        }
+
+        return {
+            ...item,
+            rating,
+            price_per_night: price,
+            matchScore: Math.round(score),
+            matchReasons: reasons.length > 0 ? reasons : ['Balanced recommendation'],
+        };
+    };
+
+    const rankHotels = (items) => {
+        const ranked = items
+            .filter((item) => Number(item.rating || 0) >= minRating)
+            .filter((item) => (maxPrice > 0 ? Number(item.price_per_night || item.price || 0) <= maxPrice : true))
+            .map(scoreHotel);
+
+        return ranked.sort((a, b) => {
+            if (sortMode === 'price-asc') return Number(a.price_per_night || 0) - Number(b.price_per_night || 0);
+            if (sortMode === 'price-desc') return Number(b.price_per_night || 0) - Number(a.price_per_night || 0);
+            if (sortMode === 'rating') return Number(b.rating || 0) - Number(a.rating || 0);
+            if (sortMode === 'value') {
+                const valueA = (Number(a.rating || 0) * 10) / Math.max(1, Number(a.price_per_night || 0) / 1000);
+                const valueB = (Number(b.rating || 0) * 10) / Math.max(1, Number(b.price_per_night || 0) / 1000);
+                return valueB - valueA;
+            }
+            return Number(b.matchScore || 0) - Number(a.matchScore || 0);
+        });
+    };
 
     try {
         const [rows] = await db.execute(
@@ -964,6 +1028,119 @@ router.get('/hotels', async (req, res) => {
         return res.json(rankHotels(fallbackRows));
     }
 });
+
+function toPaise(amount) {
+    return Math.max(0, Math.round(Number(amount) || 0) * 100);
+}
+
+function createOrderReceipt(bookingId) {
+    return `bk_${String(bookingId)}_${Date.now().toString(36)}`;
+}
+
+function buildPaymentSummary(booking, session = {}) {
+    return {
+        status: session.status || 'pending',
+        method: session.method || 'upi',
+        provider: session.provider || 'mock',
+        orderId: session.orderId || null,
+        paymentId: session.paymentId || null,
+        signature: session.signature || null,
+        currency: session.currency || 'INR',
+        amount: Number(booking.amount) || 0,
+        updatedAt: new Date().toISOString(),
+        attempts: Number(booking?.details?.payment?.attempts || 0) + 1,
+    };
+}
+
+async function persistBookingPaymentState({ bookingId, userId, session = {}, status = 'pending', paymentId = null, signature = null, provider = 'mock', method = 'upi' }) {
+    const updatePayment = (booking) => {
+        const details = typeof booking.details === 'object' && booking.details !== null ? { ...booking.details } : {};
+        details.payment = buildPaymentSummary(booking, {
+            ...session,
+            status,
+            paymentId,
+            signature,
+            provider,
+            method,
+        });
+        return { ...booking, details };
+    };
+
+    try {
+        await ensureBookingsTable();
+        const [rows] = await db.execute(
+            'SELECT id, booking_type, user_id, title, city, amount, details_json, status, created_at FROM travel_bookings WHERE id = ? AND user_id = ? LIMIT 1',
+            [bookingId, userId],
+        );
+        if (!rows?.length) return null;
+
+        const row = rows[0];
+        const booking = {
+            id: row.id,
+            type: row.booking_type,
+            userId: row.user_id,
+            title: row.title,
+            city: row.city,
+            amount: Number(row.amount) || 0,
+            details: typeof row.details_json === 'string' ? JSON.parse(row.details_json || '{}') : (row.details_json || {}),
+            status: row.status,
+            createdAt: row.created_at,
+        };
+        const updated = updatePayment(booking);
+
+        await db.execute(
+            'UPDATE travel_bookings SET details_json = ? WHERE id = ? AND user_id = ?',
+            [JSON.stringify(updated.details), bookingId, userId],
+        );
+
+        return updated;
+    } catch (err) {
+        if (!isDatabaseUnavailable(err)) throw err;
+
+        const index = localBookings.findIndex((item) => Number(item.id) === Number(bookingId) && Number(item.userId) === Number(userId));
+        if (index === -1) return null;
+        localBookings[index] = updatePayment(localBookings[index]);
+        return localBookings[index];
+    }
+}
+
+async function createRazorpayOrder({ bookingId, amount, currency = 'INR', receipt, notes = {} }) {
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    if (!keyId || !keySecret) return null;
+
+    const response = await fetch('https://api.razorpay.com/v1/orders', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString('base64')}`,
+        },
+        body: JSON.stringify({
+            amount: toPaise(amount),
+            currency,
+            receipt: receipt || createOrderReceipt(bookingId),
+            payment_capture: 1,
+            notes: {
+                bookingId: String(bookingId),
+                ...notes,
+            },
+        }),
+    });
+
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(`Razorpay order failed: ${message}`);
+    }
+
+    return response.json();
+}
+
+function verifyRazorpaySignature({ orderId, paymentId, signature }) {
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    if (!secret) return false;
+    const expected = crypto.createHmac('sha256', secret).update(`${orderId}|${paymentId}`).digest('hex');
+    return expected === signature;
+}
 
 router.post('/bookings', async (req, res) => {
     const { booking, error } = sanitizeBookingPayload(req.body);
@@ -1377,6 +1554,320 @@ router.post('/bookings/:id/payment', async (req, res) => {
             details: patchDetails(localBookings[index].details),
         };
         return res.json({ success: true, status, method });
+    }
+});
+
+router.post('/bookings/:id/payment/session', async (req, res) => {
+    const bookingId = Number(req.params?.id);
+    const userId = Number(req.body?.userId);
+    const method = String(req.body?.method || 'upi').trim().toLowerCase();
+
+    if (!Number.isFinite(bookingId) || bookingId <= 0) {
+        return res.status(400).json({ error: 'Invalid booking id' });
+    }
+    if (!Number.isFinite(userId) || userId <= 0) {
+        return res.status(400).json({ error: 'Valid user id is required' });
+    }
+
+    try {
+        await ensureBookingsTable();
+        const [rows] = await db.execute(
+            'SELECT id, booking_type, user_id, title, city, amount, details_json, status, created_at FROM travel_bookings WHERE id = ? AND user_id = ? LIMIT 1',
+            [bookingId, userId],
+        );
+        if (!rows?.length) return res.status(404).json({ error: 'Booking not found' });
+
+        const row = rows[0];
+        const booking = {
+            id: row.id,
+            type: row.booking_type,
+            userId: row.user_id,
+            title: row.title,
+            city: row.city,
+            amount: Number(row.amount) || 0,
+            details: typeof row.details_json === 'string' ? JSON.parse(row.details_json || '{}') : (row.details_json || {}),
+            status: row.status,
+            createdAt: row.created_at,
+        };
+
+        const sessionNotes = {
+            bookingType: booking.type,
+            bookingTitle: booking.title,
+            bookingCity: booking.city,
+            method,
+        };
+        const receipt = createOrderReceipt(bookingId);
+        const razorpayOrder = await createRazorpayOrder({
+            bookingId,
+            amount: booking.amount,
+            receipt,
+            notes: sessionNotes,
+        }).catch((error) => ({ error }));
+
+        if (razorpayOrder?.error || !razorpayOrder) {
+            const session = {
+                provider: 'mock',
+                status: 'created',
+                method,
+                orderId: `mock_${receipt}`,
+                receipt,
+                currency: 'INR',
+                amount: booking.amount,
+                keyId: null,
+                checkout: {
+                    name: 'InTravel AI',
+                    description: `${booking.title} booking payment`,
+                    prefill: {},
+                    notes: sessionNotes,
+                },
+            };
+
+            await persistBookingPaymentState({
+                bookingId,
+                userId,
+                session,
+                status: 'pending',
+                provider: 'mock',
+                method,
+            });
+
+            return res.json({
+                provider: 'mock',
+                ...session,
+                message: 'Gateway not configured. Using secure mock checkout.',
+            });
+        }
+
+        const session = {
+            provider: 'razorpay',
+            status: 'created',
+            method,
+            orderId: razorpayOrder.id,
+            receipt,
+            currency: razorpayOrder.currency || 'INR',
+            amount: Number(booking.amount) || 0,
+            keyId: process.env.RAZORPAY_KEY_ID,
+            checkout: {
+                name: 'InTravel AI',
+                description: `${booking.title} booking payment`,
+                prefill: {
+                    email: booking?.details?.contactInfo?.email || '',
+                    contact: booking?.details?.contactInfo?.phone || '',
+                    name: booking?.details?.contactInfo?.name || '',
+                },
+                notes: sessionNotes,
+                theme: {
+                    color: '#0B74DE',
+                },
+            },
+        };
+
+        await persistBookingPaymentState({
+            bookingId,
+            userId,
+            session,
+            status: 'pending',
+            provider: 'razorpay',
+            method,
+            session,
+        });
+
+        return res.json(session);
+    } catch (err) {
+        if (!isDatabaseUnavailable(err)) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        const booking = localBookings.find((item) => Number(item.id) === bookingId && Number(item.userId) === userId);
+        if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+        const sessionNotes = {
+            bookingType: booking.type,
+            bookingTitle: booking.title,
+            bookingCity: booking.city,
+            method,
+        };
+        const receipt = createOrderReceipt(bookingId);
+        const razorpayOrder = await createRazorpayOrder({
+            bookingId,
+            amount: booking.amount,
+            receipt,
+            notes: sessionNotes,
+        }).catch((error) => ({ error }));
+
+        if (razorpayOrder?.error || !razorpayOrder) {
+            const session = {
+                provider: 'mock',
+                status: 'created',
+                method,
+                orderId: `mock_${receipt}`,
+                receipt,
+                currency: 'INR',
+                amount: booking.amount,
+                keyId: null,
+                checkout: {
+                    name: 'InTravel AI',
+                    description: `${booking.title} booking payment`,
+                    prefill: {},
+                    notes: sessionNotes,
+                },
+            };
+
+            await persistBookingPaymentState({
+                bookingId,
+                userId,
+                session,
+                status: 'pending',
+                provider: 'mock',
+                method,
+            });
+
+            return res.json({
+                provider: 'mock',
+                ...session,
+                message: 'Gateway not configured. Using secure mock checkout.',
+            });
+        }
+
+        const session = {
+            provider: 'razorpay',
+            status: 'created',
+            method,
+            orderId: razorpayOrder.id,
+            receipt,
+            currency: razorpayOrder.currency || 'INR',
+            amount: Number(booking.amount) || 0,
+            keyId: process.env.RAZORPAY_KEY_ID,
+            checkout: {
+                name: 'InTravel AI',
+                description: `${booking.title} booking payment`,
+                prefill: {
+                    email: booking?.details?.contactInfo?.email || '',
+                    contact: booking?.details?.contactInfo?.phone || '',
+                    name: booking?.details?.contactInfo?.name || '',
+                },
+                notes: sessionNotes,
+                theme: {
+                    color: '#0B74DE',
+                },
+            },
+        };
+
+        await persistBookingPaymentState({
+            bookingId,
+            userId,
+            session,
+            status: 'pending',
+            provider: 'razorpay',
+            method,
+        });
+
+        return res.json(session);
+    }
+});
+
+router.post('/bookings/:id/payment/verify', async (req, res) => {
+    const bookingId = Number(req.params?.id);
+    const userId = Number(req.body?.userId);
+    const provider = String(req.body?.provider || 'mock').trim().toLowerCase();
+    const method = String(req.body?.method || 'upi').trim().toLowerCase();
+    const orderId = String(req.body?.orderId || '').trim();
+    const paymentId = String(req.body?.paymentId || '').trim();
+    const signature = String(req.body?.signature || '').trim();
+    const status = String(req.body?.status || 'success').trim().toLowerCase();
+
+    if (!Number.isFinite(bookingId) || bookingId <= 0) {
+        return res.status(400).json({ error: 'Invalid booking id' });
+    }
+    if (!Number.isFinite(userId) || userId <= 0) {
+        return res.status(400).json({ error: 'Valid user id is required' });
+    }
+
+    try {
+        const verified = provider === 'razorpay'
+            ? verifyRazorpaySignature({ orderId, paymentId, signature })
+            : status === 'success' || status === 'paid';
+
+        if (!verified) {
+            await persistBookingPaymentState({
+                bookingId,
+                userId,
+                session: { provider, orderId, paymentId, signature, method },
+                status: 'failed',
+                provider,
+                method,
+                paymentId,
+                signature,
+            });
+            return res.status(400).json({ error: 'Payment verification failed' });
+        }
+
+        const booking = await persistBookingPaymentState({
+            bookingId,
+            userId,
+            session: { provider, orderId, paymentId, signature, method },
+            status: 'success',
+            provider,
+            method,
+            paymentId,
+            signature,
+        });
+
+        if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+        return res.json({
+            success: true,
+            status: 'success',
+            provider,
+            method,
+            orderId,
+            paymentId,
+        });
+    } catch (err) {
+        if (!isDatabaseUnavailable(err)) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        const booking = localBookings.find((item) => Number(item.id) === bookingId && Number(item.userId) === userId);
+        if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+        const verified = provider === 'razorpay'
+            ? verifyRazorpaySignature({ orderId, paymentId, signature })
+            : status === 'success' || status === 'paid';
+
+        if (!verified) {
+            await persistBookingPaymentState({
+                bookingId,
+                userId,
+                session: { provider, orderId, paymentId, signature, method },
+                status: 'failed',
+                provider,
+                method,
+                paymentId,
+                signature,
+            });
+            return res.status(400).json({ error: 'Payment verification failed' });
+        }
+
+        await persistBookingPaymentState({
+            bookingId,
+            userId,
+            session: { provider, orderId, paymentId, signature, method },
+            status: 'success',
+            provider,
+            method,
+            paymentId,
+            signature,
+        });
+
+        return res.json({
+            success: true,
+            status: 'success',
+            provider,
+            method,
+            orderId,
+            paymentId,
+        });
     }
 });
 

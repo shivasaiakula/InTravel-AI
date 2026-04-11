@@ -15,12 +15,17 @@ import Packing from './pages/Packing';
 import Bookings from './pages/Bookings';
 import Chatbot from './components/Chatbot';
 
-const SIMPLE_THEME = 'minimal-light';
+const THEME_STORAGE_KEY = 'intravel-theme';
+const DEFAULT_THEME = 'minimal-light';
 
 function App() {
   useEffect(() => {
-    document.documentElement.setAttribute('data-season-theme', SIMPLE_THEME);
-    localStorage.setItem('intravel-theme', SIMPLE_THEME);
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || DEFAULT_THEME;
+    document.documentElement.setAttribute('data-season-theme', savedTheme);
+
+    if (!localStorage.getItem(THEME_STORAGE_KEY)) {
+      localStorage.setItem(THEME_STORAGE_KEY, savedTheme);
+    }
   }, []);
 
   return (

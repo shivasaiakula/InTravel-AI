@@ -35,6 +35,75 @@ function getDefaultHotelBookingForm() {
 
 const CATEGORIES = ['All', 'Beach', 'Mountain', 'Heritage', 'Spiritual', 'Nature', 'Adventure'];
 
+const FALLBACK_DESTINATIONS = [
+  {
+    id: 1,
+    name: 'Goa',
+    state: 'Goa',
+    category: 'Beach',
+    best_time: 'Nov to Feb',
+    description: 'Beach sunsets, nightlife, and relaxed coastal escapes.',
+    attractions: 'Baga Beach, old churches, flea markets, and water sports.',
+    travel_tips: 'Book beach stays early for the weekend season.',
+    nearby_places: 'Anjuna, Candolim, and South Goa beaches.',
+  },
+  {
+    id: 2,
+    name: 'Jaipur',
+    state: 'Rajasthan',
+    category: 'Heritage',
+    best_time: 'Oct to Mar',
+    description: 'A royal city of forts, bazaars, and cultural landmarks.',
+    attractions: 'Amber Fort, City Palace, Hawa Mahal, and street markets.',
+    travel_tips: 'Use cabs for faster city hops between forts.',
+    nearby_places: 'Nahargarh Fort, Jantar Mantar, and Jal Mahal.',
+  },
+  {
+    id: 3,
+    name: 'Varanasi',
+    state: 'Uttar Pradesh',
+    category: 'Spiritual',
+    best_time: 'Oct to Mar',
+    description: 'Ancient ghats, river rituals, and a deeply spiritual atmosphere.',
+    attractions: 'Dashashwamedh Ghat, boat rides, temples, and evening aarti.',
+    travel_tips: 'Visit the ghats early in the morning for quieter walks.',
+    nearby_places: 'Sarnath, Assi Ghat, and old city lanes.',
+  },
+  {
+    id: 4,
+    name: 'Manali',
+    state: 'Himachal Pradesh',
+    category: 'Mountain',
+    best_time: 'Mar to Jun',
+    description: 'A scenic hill escape with snow views and adventure activities.',
+    attractions: 'Solang Valley, Old Manali, river walks, and mountain cafes.',
+    travel_tips: 'Carry layers even in summer because evenings get cold.',
+    nearby_places: 'Kullu, Rohtang, and Vashisht hot springs.',
+  },
+  {
+    id: 5,
+    name: 'Kerala (Alleppey)',
+    state: 'Kerala',
+    category: 'Nature',
+    best_time: 'Sep to Mar',
+    description: 'Backwaters, houseboats, and calm green landscapes.',
+    attractions: 'Houseboat cruises, paddy fields, lagoons, and local cuisine.',
+    travel_tips: 'Choose a sunset cruise for the best backwater view.',
+    nearby_places: 'Kumarakom, Marari, and Kumarakom Bird Sanctuary.',
+  },
+  {
+    id: 6,
+    name: 'Ladakh',
+    state: 'Ladakh',
+    category: 'Adventure',
+    best_time: 'Jun to Sep',
+    description: 'High-altitude roads, monasteries, and dramatic landscapes.',
+    attractions: 'Pangong Lake, Nubra Valley, monasteries, and mountain passes.',
+    travel_tips: 'Acclimatize for at least a day before planning long drives.',
+    nearby_places: 'Leh, Khardung La, and Tso Moriri.',
+  },
+];
+
 const DESTINATION_IMAGE_MAP = {
   Goa: 'https://images.unsplash.com/photo-1512343879784-a960bf40e7f2?w=1200&auto=format&fit=crop',
   Manali: 'https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?w=1200&auto=format&fit=crop',
@@ -184,10 +253,17 @@ export default function Explore() {
   const fetchDestinations = async () => {
     try {
       const { data } = await axios.get('/api/destinations');
-      setDestinations(data);
+      const nextDestinations = Array.isArray(data) && data.length > 0 ? data : FALLBACK_DESTINATIONS;
+      setDestinations(nextDestinations);
+      if (!selected && nextDestinations.length > 0) {
+        setSelected(nextDestinations[0]);
+      }
     } catch (err) {
       console.error(err);
-      setDestinations([]);
+      setDestinations(FALLBACK_DESTINATIONS);
+      if (!selected && FALLBACK_DESTINATIONS.length > 0) {
+        setSelected(FALLBACK_DESTINATIONS[0]);
+      }
     } finally {
       setLoading(false);
     }

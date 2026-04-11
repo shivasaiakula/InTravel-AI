@@ -75,6 +75,12 @@ export default function Bookings() {
     const [hotelSuggestions, setHotelSuggestions] = useState([]);
     const [hotelLoading, setHotelLoading] = useState(false);
     const [selectedHotelSuggestionId, setSelectedHotelSuggestionId] = useState('');
+    const [hotelFilters, setHotelFilters] = useState({
+        minRating: '4',
+        maxPrice: '',
+        sort: 'best',
+        amenities: '',
+    });
     const [couponCode, setCouponCode] = useState('');
     const [appliedCoupon, setAppliedCoupon] = useState(null);
     const [couponLoading, setCouponLoading] = useState(false);
@@ -127,6 +133,28 @@ export default function Bookings() {
     const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
     const makeTicketRef = () => `ITA${Date.now().toString().slice(-8)}`;
+
+    const loadRazorpayScript = () => new Promise((resolve) => {
+        if (typeof window !== 'undefined' && window.Razorpay) {
+            resolve(true);
+            return;
+        }
+
+        const existing = document.querySelector('script[data-razorpay="true"]');
+        if (existing) {
+            existing.addEventListener('load', () => resolve(true), { once: true });
+            existing.addEventListener('error', () => resolve(false), { once: true });
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        script.async = true;
+        script.dataset.razorpay = 'true';
+        script.onload = () => resolve(true);
+        script.onerror = () => resolve(false);
+        document.body.appendChild(script);
+    });
 
     const hotelNights = useMemo(() => {
         if (!hotelForm.checkIn || !hotelForm.checkOut) return 0;
@@ -355,17 +383,66 @@ export default function Bookings() {
         await handlePreviewRefund(booking?.id);
     };
 
-    const updatePaymentStatus = async (status) => {
-        if (!lastTicket?.id || !user?.id) return;
-        try {
-            await axios.post(`/api/bookings/${lastTicket.id}/payment`, {
-                userId: user.id,
-                method: lastTicket.paymentMethod || paymentMethod,
-                status,
-            }, { timeout: 10000 });
-        } catch {
-            // Keep UI resilient even if backend persistence fails.
+    const syncTicketPaymentState = (paymentStatus, extra = {}) => {
+        if (!lastTicket?.id) return;
+        const nextPayment = {
+            ...((lastTicket.details || {}).payment || {}),
+            method: extra.method || lastTicket.paymentMethod || paymentMethod,
+            status: paymentStatus,
+            provider: extra.provider || 'mock',
+            orderId: extra.orderId || null,
+            paymentId: extra.paymentId || null,
+            signature: extra.signature || null,
+            updatedAt: new Date().toISOString(),
+        };
+
+        setLastTicket((prev) => prev ? ({
+            ...prev,
+            paymentMethod: extra.method || prev.paymentMethod || paymentMethod,
+            paymentStatus,
+            paymentProvider: extra.provider || prev.paymentProvider || 'mock',
+            paymentOrderId: extra.orderId || prev.paymentOrderId || null,
+            paymentId: extra.paymentId || prev.paymentId || null,
+            paymentSignature: extra.signature || prev.paymentSignature || null,
+            details: {
+                ...(prev.details || {}),
+                payment: nextPayment,
+            },
+        }) : prev);
+
+        setBookings((prev) => prev.map((item) => (
+            Number(item.id) === Number(lastTicket.id)
+                ? {
+                    ...item,
+                    details: {
+                        ...(item.details || {}),
+                        payment: {
+                            ...((item.details || {}).payment || {}),
+                            ...nextPayment,
+                        },
+                    },
+                }
+                : item
+        )));
+    };
+
+    const finalizePayment = async (payload) => {
+        if (!lastTicket?.id || !user?.id) throw new Error('Missing booking context');
+        const { data } = await axios.post(`/api/bookings/${lastTicket.id}/payment/verify`, {
+            userId: user.id,
+            method: lastTicket.paymentMethod || paymentMethod,
+            ...payload,
+        }, { timeout: 15000 });
+
+        if (!data?.success) {
+            throw new Error('Payment verification failed');
         }
+
+        syncTicketPaymentState('success', payload);
+        if (showHistory) {
+            fetchBookings();
+        }
+        setActionMessage('Payment completed successfully. Ticket is now confirmed.');
     };
 
     const handleProcessPayment = async (isRetry = false) => {
@@ -374,57 +451,73 @@ export default function Bookings() {
         setError('');
         setInfoMessage('');
 
-        await updatePaymentStatus('pending');
-        setLastTicket((prev) => prev ? { ...prev, paymentStatus: 'pending' } : prev);
-        setBookings((prev) => prev.map((item) => (
-            Number(item.id) === Number(lastTicket.id)
-                ? {
-                    ...item,
-                    details: {
-                        ...(item.details || {}),
-                        payment: {
-                            ...((item.details || {}).payment || {}),
-                            method: lastTicket.paymentMethod || paymentMethod,
-                            status: 'pending',
+        try {
+            syncTicketPaymentState('pending');
+            setInfoMessage('Opening secure checkout...');
+
+            const { data: session } = await axios.post(`/api/bookings/${lastTicket.id}/payment/session`, {
+                userId: user.id,
+                method: lastTicket.paymentMethod || paymentMethod,
+            }, { timeout: 15000 });
+
+            if (session?.provider === 'razorpay' && session?.keyId && session?.orderId) {
+                const scriptReady = await loadRazorpayScript();
+                if (!scriptReady || typeof window === 'undefined' || !window.Razorpay) {
+                    throw new Error('Payment checkout failed to load.');
+                }
+
+                const checkout = new window.Razorpay({
+                    key: session.keyId,
+                    amount: Math.max(1, Math.round(Number(session.amount || draftPayable) * 100)),
+                    currency: session.currency || 'INR',
+                    name: session.checkout?.name || 'InTravel AI',
+                    description: session.checkout?.description || `${lastTicket.title} booking payment`,
+                    order_id: session.orderId,
+                    prefill: session.checkout?.prefill || {},
+                    notes: session.checkout?.notes || {},
+                    theme: session.checkout?.theme || { color: '#0B74DE' },
+                    handler: async (response) => {
+                        try {
+                            await finalizePayment({
+                                provider: 'razorpay',
+                                orderId: response.razorpay_order_id,
+                                paymentId: response.razorpay_payment_id,
+                                signature: response.razorpay_signature,
+                            });
+                        } catch (err) {
+                            setError(err?.response?.data?.error || err?.message || 'Unable to verify payment.');
+                            syncTicketPaymentState('failed', { provider: 'razorpay' });
+                        } finally {
+                            setPaymentProcessing(false);
+                        }
+                    },
+                    modal: {
+                        ondismiss: () => {
+                            setError('Payment window closed before completion.');
+                            setPaymentProcessing(false);
                         },
                     },
-                }
-                : item
-        )));
+                });
 
-        await new Promise((resolve) => setTimeout(resolve, 900));
-        const successProbability = isRetry ? 0.85 : 0.7;
-        const isSuccess = Math.random() < successProbability;
-        const finalStatus = isSuccess ? 'success' : 'failed';
-        await updatePaymentStatus(finalStatus);
+                checkout.open();
+                return;
+            }
 
-        setLastTicket((prev) => prev ? { ...prev, paymentStatus: finalStatus } : prev);
-        setBookings((prev) => prev.map((item) => (
-            Number(item.id) === Number(lastTicket.id)
-                ? {
-                    ...item,
-                    details: {
-                        ...(item.details || {}),
-                        payment: {
-                            ...((item.details || {}).payment || {}),
-                            method: lastTicket.paymentMethod || paymentMethod,
-                            status: finalStatus,
-                        },
-                    },
-                }
-                : item
-        )));
-
-        if (showHistory) {
-            fetchBookings();
+            await new Promise((resolve) => setTimeout(resolve, isRetry ? 500 : 800));
+            await finalizePayment({
+                provider: session?.provider || 'mock',
+                orderId: session?.orderId || `mock_${Date.now()}`,
+                paymentId: `mock_pay_${Date.now()}`,
+                signature: 'mock-signature',
+                status: 'success',
+            });
+        } catch (err) {
+            const message = err?.response?.data?.error || err?.message || 'Payment failed. Please retry payment.';
+            setError(message);
+            syncTicketPaymentState('failed', { provider: 'mock' });
+        } finally {
+            setPaymentProcessing(false);
         }
-
-        if (isSuccess) {
-            setActionMessage('Payment completed successfully. Ticket is now confirmed.');
-        } else {
-            setError('Payment failed. Please retry payment.');
-        }
-        setPaymentProcessing(false);
     };
 
     const handleSendTicketEmail = async () => {
@@ -452,7 +545,7 @@ export default function Bookings() {
         }
     };
 
-    const fetchBestHotels = async (cityInput = hotelForm.city) => {
+    const fetchBestHotels = async (cityInput = hotelForm.city, filters = hotelFilters) => {
         const city = String(cityInput || '').trim();
         if (!city) {
             setError('Enter a city to view best hotels.');
@@ -476,11 +569,31 @@ export default function Bookings() {
                 rating: Number(item.rating ?? 0),
                 amenities: item.amenities || '',
                 imageUrl: item.image_url || item.imageUrl || '',
+                matchScore: Number(item.matchScore || 0),
+                matchReasons: Array.isArray(item.matchReasons) ? item.matchReasons : [],
             }));
 
+            const amenityTerms = String(filters.amenities || '').trim().toLowerCase();
             const ranked = hotels
                 .filter((h) => h.name && h.pricePerNight >= 0)
-                .sort((a, b) => (b.rating - a.rating) || (a.pricePerNight - b.pricePerNight));
+                .filter((h) => (Number(filters.minRating || 0) > 0 ? h.rating >= Number(filters.minRating || 0) : true))
+                .filter((h) => (Number(filters.maxPrice || 0) > 0 ? h.pricePerNight <= Number(filters.maxPrice || 0) : true))
+                .filter((h) => {
+                    if (!amenityTerms) return true;
+                    const haystack = String(h.amenities || '').toLowerCase();
+                    return amenityTerms.split(/[\s,]+/).filter(Boolean).every((term) => haystack.includes(term));
+                })
+                .sort((a, b) => {
+                    if (filters.sort === 'rating') return b.rating - a.rating;
+                    if (filters.sort === 'price-asc') return a.pricePerNight - b.pricePerNight;
+                    if (filters.sort === 'price-desc') return b.pricePerNight - a.pricePerNight;
+                    if (filters.sort === 'value') {
+                        const valueA = (a.rating * 10) / Math.max(1, a.pricePerNight / 1000);
+                        const valueB = (b.rating * 10) / Math.max(1, b.pricePerNight / 1000);
+                        return valueB - valueA;
+                    }
+                    return (b.matchScore || 0) - (a.matchScore || 0) || (b.rating - a.rating) || (a.pricePerNight - b.pricePerNight);
+                });
 
             setHotelSuggestions(ranked);
             setSelectedHotelSuggestionId(ranked[0]?.id ? String(ranked[0].id) : '');
@@ -1268,7 +1381,7 @@ export default function Bookings() {
                                             value={hotelForm.city}
                                             onChange={(e) => setHotelForm({ ...hotelForm, city: e.target.value })}
                                             onBlur={() => {
-                                                if (hotelForm.city.trim()) fetchBestHotels(hotelForm.city);
+                                                if (hotelForm.city.trim()) fetchBestHotels(hotelForm.city, hotelFilters);
                                             }}
                                             placeholder="e.g., Mumbai"
                                             required
@@ -1276,11 +1389,63 @@ export default function Bookings() {
                                     </div>
                                 </div>
 
+                                <div className="hotel-controls">
+                                    <div className="form-row-2 hotel-controls-grid">
+                                        <div className="form-group">
+                                            <label>Minimum Rating</label>
+                                            <select
+                                                value={hotelFilters.minRating}
+                                                onChange={(e) => setHotelFilters((prev) => ({ ...prev, minRating: e.target.value }))}
+                                            >
+                                                <option value="0">Any</option>
+                                                <option value="4">4.0+</option>
+                                                <option value="4.2">4.2+</option>
+                                                <option value="4.5">4.5+</option>
+                                                <option value="4.7">4.7+</option>
+                                            </select>
+                                        </div>
+                                        <div className="form-group">
+                                            <label>Max Price</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                value={hotelFilters.maxPrice}
+                                                onChange={(e) => setHotelFilters((prev) => ({ ...prev, maxPrice: e.target.value }))}
+                                                placeholder="No limit"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="form-row-2 hotel-controls-grid">
+                                        <div className="form-group">
+                                            <label>Sort</label>
+                                            <select
+                                                value={hotelFilters.sort}
+                                                onChange={(e) => setHotelFilters((prev) => ({ ...prev, sort: e.target.value }))}
+                                            >
+                                                <option value="best">Best Match</option>
+                                                <option value="value">Best Value</option>
+                                                <option value="rating">Top Rated</option>
+                                                <option value="price-asc">Price: Low to High</option>
+                                                <option value="price-desc">Price: High to Low</option>
+                                            </select>
+                                        </div>
+                                        <div className="form-group">
+                                            <label>Amenities</label>
+                                            <input
+                                                type="text"
+                                                value={hotelFilters.amenities}
+                                                onChange={(e) => setHotelFilters((prev) => ({ ...prev, amenities: e.target.value }))}
+                                                placeholder="pool, spa, breakfast"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div className="hotel-search-row">
                                     <button
                                         type="button"
                                         className="button-secondary btn-sm"
-                                        onClick={() => fetchBestHotels(hotelForm.city)}
+                                        onClick={() => fetchBestHotels(hotelForm.city, hotelFilters)}
                                         disabled={hotelLoading}
                                     >
                                         {hotelLoading ? 'Finding Best Hotels...' : 'Show Best Hotels'}
@@ -1304,8 +1469,9 @@ export default function Bookings() {
                                                     <span><MapPin size={13} /> {hotel.city}</span>
                                                     <span><Star size={13} /> {hotel.rating ? hotel.rating.toFixed(1) : 'N/A'}</span>
                                                     <span>{formatAmount(hotel.pricePerNight)} / night</span>
+                                                    {hotel.matchScore ? <span className="suggestion-score">Score {hotel.matchScore}</span> : null}
                                                 </div>
-                                                {hotel.amenities && <small>{hotel.amenities}</small>}
+                                                {hotel.matchReasons?.length > 0 && <small>{hotel.matchReasons.slice(0, 2).join(' · ')}</small>}
                                             </button>
                                         ))}
                                     </div>
